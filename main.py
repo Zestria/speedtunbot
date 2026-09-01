@@ -1,8 +1,11 @@
 import asyncio
 import uuid
 import os
+import json
+from cachetools import TTLCache
 from dotenv import load_dotenv
 from datetime import datetime
+
 
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import (
@@ -10,7 +13,12 @@ from telebot.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
-    BotCommand
+    BotCommand,
+    BotCommandScopeChat
+)
+from telebot.asyncio_handler_backends import (
+    BaseMiddleware,
+    CancelUpdate
 )
 
 from py3xui import (
@@ -25,15 +33,54 @@ api = AsyncApi(os.getenv('DOMAIN'), token=os.getenv('VPN_TOKEN'))
 bot = AsyncTeleBot(os.getenv('BOT_TOKEN'))
 
 INBOUND_ID = int(os.getenv('INBOUND_ID'))
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
+ADMIN_IDS = json.loads(os.getenv('ADMIN_IDS'))
+IS_MAINTENANCE_MODE = False
+
+user_limit = TTLCache(maxsize=10000, ttl=1.0)
+
+
+class ThrottlingMiddleware(BaseMiddleware):
+    def __init__(self):
+        self.update_types = ['message', 'callback_query']
+
+    async def pre_process(self, message: Message, data):
+        user_id = message.from_user.id
+
+        if user_id in user_limit:
+            return CancelUpdate()
+
+        user_limit[user_id] = True
+
+    async def post_process(self, message, data, exception):
+        pass
+
+
+class MaintenanceMiddleware(BaseMiddleware):
+    def __init__(self):
+        self.update_types = ['message', 'callback_query']
+
+    async def pre_process(self, message: Message, data):
+        user_id = message.from_user.id
+
+        if IS_MAINTENANCE_MODE and user_id not in ADMIN_IDS:
+            await bot.send_message(
+                user_id,
+                "Бот на техническом обслуживании."
+            )
+
+        pass
+
+    async def post_process(self, message, data, exception):
+        pass
+
+
+bot.setup_middleware(ThrottlingMiddleware())
+bot.setup_middleware(MaintenanceMiddleware())
 
 
 @bot.message_handler(commands='start')
 async def start_handler(message: Message):
     # на этом этапе надо создавать юзера/либо проверять существование
-
-    print(message.chat.id)
-
     tg_id: int = message.from_user.id
     username: str = message.from_user.username or "no_username"
 
@@ -105,7 +152,7 @@ async def profile_handler(message: Message):
 
 @bot.message_handler(commands='pay')
 async def pay_handler(message):
-    markup = InlineKeyboardMarkup(
+    markup = InlineKeyboardMarkup().add(
         InlineKeyboardButton(
             text="Уведомить об оплате",
             callback_data="check_payment"
@@ -128,8 +175,11 @@ async def callback_query(call: CallbackQuery):
         if call.from_user.username:
             user_info = f"@{call.from_user.username}"
 
-        await bot.send_message(ADMIN_ID,
-                               f"Пользователь {user_info} запросил подписку.")
+        for admin_id in ADMIN_IDS:
+            await bot.send_message(
+                admin_id,
+                f"Пользователь {user_info} запросил подписку."
+            )
 
 
 @bot.message_handler(commands='support')
@@ -137,18 +187,39 @@ async def support_handler(message):
     await bot.reply_to(message, "За помощью обратиться к @snow")
 
 
-async def main():
-    await bot.delete_my_commands(scope=None)
+@bot.message_handler(commands='maintenance')
+async def maintenance_handler(message):
+    if message.from_user.id in ADMIN_IDS:
+        global IS_MAINTENANCE_MODE
+        IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
+        text = "Режим тех. обслуживания выключен"
+        if IS_MAINTENANCE_MODE:
+            text = "Режим тех обслуживания включён"
 
-    await bot.set_my_commands(
-        commands=[
-            BotCommand("start", "Войти в аккаунт"),
-            BotCommand("profile", "Профиль"),
-            BotCommand("pay", "Оплата"),
-            BotCommand("support", "Служба поддержки")
-        ],
-        scope=None
+        await bot.send_message(message.from_user.id, text)
+
+
+async def main():
+    await bot.delete_my_commands()
+
+    commands = [
+        BotCommand("start", "Войти в аккаунт"),
+        BotCommand("profile", "Профиль"),
+        BotCommand("pay", "Оплата"),
+        BotCommand("support", "Служба поддержки")
+    ]
+
+    await bot.set_my_commands(commands)
+
+    commands.append(
+        BotCommand("maintenance", "Режим тех. обслуживания")
     )
+
+    for admin_id in ADMIN_IDS:
+        await bot.set_my_commands(
+            commands=commands,
+            scope=BotCommandScopeChat(admin_id)
+        )
 
     await bot.polling()
 
