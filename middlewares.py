@@ -7,7 +7,9 @@ from telebot.asyncio_handler_backends import (
 
 from config import (
     ADMIN_IDS,
-    IS_MAINTENANCE_MODE,
+    IS_MAINTENANCE_MODE
+)
+from loads import (
     busy_users,
     bot
 )

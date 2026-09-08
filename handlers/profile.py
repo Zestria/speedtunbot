@@ -2,17 +2,18 @@ import os
 from datetime import datetime
 
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import (
-    Message,
+from telebot.types import Message
+
+from py3xui import (
     Inbound,
     Client
 )
 
 from config import (
     INBOUND_ID,
-    ADMIN_IDS,
-    api
+    ADMIN_IDS
 )
+from loads import api
 
 
 def register_profile_handler(bot: AsyncTeleBot):

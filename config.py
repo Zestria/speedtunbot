@@ -3,24 +3,16 @@ import json
 
 from dotenv import load_dotenv
 
-from telebot.async_telebot import AsyncTeleBot
-from telebot.asyncio_storage import StateMemoryStorage
 from telebot.asyncio_handler_backends import (
     State,
     StatesGroup
 )
 
-from py3xui import AsyncApi
-
-from utils import load_banned_users
-
-
 load_dotenv()
 
-api = AsyncApi(os.getenv('DOMAIN'), token=os.getenv('VPN_TOKEN'))
-bot = AsyncTeleBot(os.getenv('BOT_TOKEN'))
-state_storage = StateMemoryStorage()
-busy_users = set()
+DOMAIN = os.getenv('DOMAIN')
+VPN_TOKEN = os.getenv('VPN_TOKEN')
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 INBOUND_ID: int = int(os.getenv('INBOUND_ID'))
 ADMIN_IDS = json.loads(os.getenv('ADMIN_IDS'))
@@ -32,7 +24,6 @@ RATES = [
 ]
 BANK_ACCOUNT_DETAILS: str = os.getenv("BANK_ACCOUNT_DETAILS")
 BANNED_FILE: str = os.getenv("BANNED_USERS_FILE")
-BANNED: set = load_banned_users()
 
 
 class UserStates(StatesGroup):

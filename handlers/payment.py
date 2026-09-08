@@ -1,9 +1,12 @@
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import (
     Message,
-    Inbound,
-    Client,
     CallbackQuery
+)
+
+from py3xui import (
+    Inbound,
+    Client
 )
 
 from telebot.util import quick_markup
@@ -13,15 +16,15 @@ from config import (
     ADMIN_IDS,
     RATES,
     BANK_ACCOUNT_DETAILS,
-    api,
     UserStates
 )
-
+from loads import api
 from utils import (
     calculate_expiry_time,
     compose_rates_text,
     get_rate_by_id
 )
+
 
 def register_payment_handler(bot: AsyncTeleBot):
     @bot.message_handler(commands='pay')
@@ -223,7 +226,7 @@ def register_payment_handler(bot: AsyncTeleBot):
         chat_id = int(query[4])
 
         await bot.answer_callback_query(call.id)
-        current_state = bot.get_state(user_id, chat_id)
+        current_state = await bot.get_state(user_id, chat_id)
         if current_state != UserStates.pending_confirmation.name:
             await bot.edit_message_text(
                 "Заявка уже обработана.",

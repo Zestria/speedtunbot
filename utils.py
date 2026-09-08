@@ -42,8 +42,8 @@ def compose_rates_text(rates):
     return text
 
 
-def get_by_rate_id(rate_id: str):
-    if not rate_id.isdigit():
+def get_rate_by_id(rate_id: str | None):
+    if rate_id is None or not rate_id.isdigit():
         return None
 
     index = int(rate_id) - 1

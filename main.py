@@ -13,25 +13,18 @@ from middlewares import (
 )
 
 from config import (
-    bot,
-    ADMIN_IDS
+    ADMIN_IDS,
+    IS_MAINTENANCE_MODE
 )
+from loads import bot
+from handlers import register_all_handlers
 
 bot.add_custom_filter(StateFilter(bot))
 
 bot.setup_middleware(ThrottlingMiddleware())
 bot.setup_middleware(MaintenanceMiddleware())
 
-
-@bot.message_handler(commands='support')
-async def support_handler(message):
-    # ПОльзователь входит в состояние waiting_for_help
-    # Затем все его сообщения перенаправляются админам
-    # Админы могут ответить ему, командой support_user tg_id
-    # Админ переходить в состояние helping_user
-    # В таком случае все сообщения от имени бота будут отправляться от юзеру
-    # Юзер и админ могут удалить свои состояния
-    await bot.reply_to(message, "За помощью обратиться к @snow")
+register_all_handlers(bot)
 
 
 @bot.message_handler(commands='maintenance')

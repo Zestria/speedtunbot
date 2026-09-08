@@ -1,20 +1,18 @@
 import uuid
 
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import (
-    Message,
+from telebot.types import Message
+
+from py3xui import (
     Inbound,
     Client
 )
 
-from config import (
-    INBOUND_ID,
-    api
-)
+from config import INBOUND_ID
+from loads import api
 
 
 def register_start_handler(bot: AsyncTeleBot):
-
     @bot.message_handler(commands='start')
     async def start_command_handler(message: Message):
         # на этом этапе надо создавать юзера/либо проверять существование
