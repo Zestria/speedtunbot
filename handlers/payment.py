@@ -96,7 +96,10 @@ def register_payment_handler(bot: AsyncTeleBot):
             call.message.id
         )
 
-    @bot.message_handler(state=UserStates.waiting_for_name)
+    @bot.message_handler(
+        state=UserStates.waiting_for_name,
+        content_types='text'
+    )
     async def process_user_credentials(message: Message):
         credentials: str = message.text
 

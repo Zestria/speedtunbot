@@ -4,6 +4,7 @@ from handlers.start import register_start_handler
 from handlers.profile import register_profile_handler
 from handlers.payment import register_payment_handler
 from handlers.support import register_support_handler
+from handlers.broadcast import register_broadcast_handler
 
 
 def register_all_handlers(bot: AsyncTeleBot):
@@ -11,3 +12,4 @@ def register_all_handlers(bot: AsyncTeleBot):
     register_profile_handler(bot)
     register_payment_handler(bot)
     register_support_handler(bot)
+    register_broadcast_handler(bot)
