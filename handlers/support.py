@@ -46,7 +46,7 @@ def register_support_handler(bot: AsyncTeleBot):
         user_info = f"ID {message.from_user.id}"
         if message.from_user.username:
             user_info = (
-                f"@{message.form_user.username}"
+                f"@{message.from_user.username}"
                 " (ID {message.from_user.id})"
             )
 

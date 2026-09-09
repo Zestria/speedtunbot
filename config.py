@@ -10,12 +10,13 @@ from telebot.asyncio_handler_backends import (
 
 load_dotenv()
 
-DOMAIN = os.getenv('DOMAIN')
-VPN_TOKEN = os.getenv('VPN_TOKEN')
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+DOMAIN = os.getenv("DOMAIN")
+VPN_TOKEN = os.getenv("VPN_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SUB_URL_BASE = os.getenv("SUB_URL_BASE")
 
-INBOUND_ID: int = int(os.getenv('INBOUND_ID'))
-ADMIN_IDS = json.loads(os.getenv('ADMIN_IDS'))
+INBOUND_ID: int = int(os.getenv("INBOUND_ID"))
+ADMIN_IDS = json.loads(os.getenv("ADMIN_IDS"))
 IS_MAINTENANCE_MODE = False
 RATES = [
     {"name": "30 дней - 150 рублей", "days": 30, "price": 150},

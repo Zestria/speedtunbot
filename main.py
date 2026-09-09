@@ -16,7 +16,10 @@ from config import (
     ADMIN_IDS,
     IS_MAINTENANCE_MODE
 )
-from loads import bot
+from loads import (
+    bot,
+    is_maintenance_lock
+)
 from handlers import register_all_handlers
 
 bot.add_custom_filter(StateFilter(bot))
@@ -30,13 +33,15 @@ register_all_handlers(bot)
 @bot.message_handler(commands='maintenance')
 async def maintenance_handler(message: Message):
     if message.from_user.id in ADMIN_IDS:
-        global IS_MAINTENANCE_MODE
-        IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
-        text = "Режим тех. обслуживания выключен"
-        if IS_MAINTENANCE_MODE:
-            text = "Режим тех обслуживания включён"
+        async with is_maintenance_lock:
+            global IS_MAINTENANCE_MODE
+            IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
+            await asyncio.sleep(0)
+            text = "Режим тех. обслуживания выключен"
+            if IS_MAINTENANCE_MODE:
+                text = "Режим тех обслуживания включён"
 
-        await bot.send_message(message.from_user.id, text)
+            await bot.send_message(message.from_user.id, text)
 
 
 # Админы могут написать важное объявление всем клиентам

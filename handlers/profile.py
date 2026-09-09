@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 
 from telebot.async_telebot import AsyncTeleBot
@@ -10,6 +9,7 @@ from py3xui import (
 )
 
 from config import (
+    SUB_URL_BASE,
     INBOUND_ID,
     ADMIN_IDS
 )
@@ -53,8 +53,8 @@ def register_profile_handler(bot: AsyncTeleBot):
 
         client_info = (
             "Моя подписка:\n"
-            f"Статус: {"Активна" if existing_client.enable else "Неактивна"}\n"
-            f"Ссылка: {os.getenv('SUB_URL_BASE')}{sub_token}\n"
+            f"Статус: {'Активна' if existing_client.enable else 'Неактивна'}\n"
+            f"Ссылка: {SUB_URL_BASE}{sub_token}\n"
             f"Действует до: {expiry_date}"
         )
         await bot.send_message(message.chat.id, client_info)

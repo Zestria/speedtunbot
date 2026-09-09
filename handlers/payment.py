@@ -192,8 +192,6 @@ def register_payment_handler(bot: AsyncTeleBot):
                 }
             }, row_width=2)
 
-            # Что делать в случае если один уже одобрил подписку
-            # Но другой админ тоже решил нажать позже
             for admin_id in ADMIN_IDS:
                 await bot.send_message(
                     admin_id,
@@ -223,12 +221,21 @@ def register_payment_handler(bot: AsyncTeleBot):
         func=lambda call: call.data.startswith('pay:admin_confirm')
     )
     async def cb_payment_handler(call: CallbackQuery):
+        await bot.answer_callback_query(call.id)
+
         query = call.data.split(":")
         param = query[2]
+        if not query[3].isdigit() or not query[4].isdigit():
+            await bot.edit_message_text(
+                "user_id или chat_id не являлись числами.",
+                call.message.chat.id,
+                call.message.id
+            )
+            return
+
         user_id = int(query[3])
         chat_id = int(query[4])
 
-        await bot.answer_callback_query(call.id)
         current_state = await bot.get_state(user_id, chat_id)
         if current_state != UserStates.pending_confirmation.name:
             await bot.edit_message_text(

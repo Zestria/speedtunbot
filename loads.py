@@ -1,3 +1,4 @@
+import asyncio
 from telebot.async_telebot import AsyncTeleBot
 from telebot.asyncio_storage import StateMemoryStorage
 
@@ -16,3 +17,4 @@ bot = AsyncTeleBot(BOT_TOKEN)
 state_storage = StateMemoryStorage()
 busy_users = set()
 banned: set = load_banned_users(BANNED_FILE)
+is_maintenance_lock = asyncio.Lock()
