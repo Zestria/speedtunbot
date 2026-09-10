@@ -79,7 +79,7 @@ def register_payment_handler(bot: AsyncTeleBot):
 
         await bot.set_state(
             call.from_user.id,
-            UserStates.waiting_for_name,
+            UserStates.awaiting_payment,
             call.message.chat.id
         )
 
@@ -88,56 +88,17 @@ def register_payment_handler(bot: AsyncTeleBot):
             call.message.chat.id
         ) as data:
             data["rate_id"] = param
+            print(f"selected rate: rate_id = {param}")
 
         await bot.edit_message_text(
-            "Напишите ФИО и банк при оплате в виде:\n"
-            "Иван Иванович И., тбанк",
-            call.message.chat.id,
-            call.message.id
-        )
-
-    @bot.message_handler(
-        state=UserStates.waiting_for_name,
-        content_types='text'
-    )
-    async def process_user_credentials(message: Message):
-        credentials: str = message.text
-
-        # Чтобы память не закончилась
-        if len(credentials) > 100:
-            credentials = credentials[:100]
-
-        async with bot.retrieve_data(
-            message.from_user.id,
-            message.chat.id
-        ) as data:
-            data["credentials"] = credentials
-            rate_id = data.get("rate_id")
-
-        rate_info = get_rate_by_id(rate_id)
-        if rate_info is None:
-            await bot.send_message(
-                message.chat.id,
-                "Тариф не найден или сессия истекла."
-            )
-            await bot.delete_state(message.from_user.id, message.chat.id)
-            return
-
-        await bot.send_message(
-            message.chat.id,
             f"Переведите {rate_info['price']} рублей"
             f" на этот счёт {BANK_ACCOUNT_DETAILS}\n"
             "Как оплатите, нажмите готово. Иначе отмените.",
+            call.message.chat.id, call.message.id,
             reply_markup=quick_markup({
                 "Готово": {"callback_data": "pay:user_confirm:accept"},
                 "Отмена": {"callback_data": "pay:user_confirm:decline"}
                 }, row_width=2)
-            )
-
-        await bot.set_state(
-            message.from_user.id,
-            UserStates.awaiting_payment,
-            message.chat.id
         )
 
     @bot.callback_query_handler(
@@ -151,8 +112,8 @@ def register_payment_handler(bot: AsyncTeleBot):
                 call.from_user.id,
                 call.message.chat.id
             ) as data:
-                credentials = data.get("credentials")
                 rate_id = data.get("rate_id")
+                print(f"user confirm: rate_id = {rate_id}")
 
             rate_info = get_rate_by_id(rate_id)
             if rate_info is None:
@@ -196,7 +157,6 @@ def register_payment_handler(bot: AsyncTeleBot):
                 await bot.send_message(
                     admin_id,
                     f"Пользователь {user_info} запросил подписку.\n"
-                    f"Его реквезиты: {credentials}.\n"
                     f"ID подписки: {rate_id}\n",
                     reply_markup=give_sub_markup
                 )
@@ -250,9 +210,8 @@ def register_payment_handler(bot: AsyncTeleBot):
                 user_id, chat_id
             ) as data:
                 rate_id: str = data.get("rate_id")
-                credentials = data.get("credentials")
 
-            # убрать у юзера состояние pending_for_confirmation
+            # убрать у юзера состояние awaiting_payment
 
             if not rate_id or int(rate_id) > len(RATES):
                 await bot.send_message(
@@ -288,8 +247,7 @@ def register_payment_handler(bot: AsyncTeleBot):
 
                     await bot.edit_message_text(
                         f"Подписка ({rate_info['name']}) успешно выдана.\n"
-                        f"Пользователь: {user_id}."
-                        f"Реквезиты: {credentials}.",
+                        f"Пользователь: {user_id}.",
                         call.message.chat.id,
                         call.message.id
                     )
