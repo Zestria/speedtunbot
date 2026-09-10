@@ -16,7 +16,7 @@ def register_support_handler(bot: AsyncTeleBot):
             message.chat.id
         )
 
-        if current_state == UserStates.waiting_for_help:
+        if current_state == UserStates.waiting_for_help.name:
             await bot.delete_state(
                 message.from_user.id,
                 message.chat.id
@@ -47,7 +47,7 @@ def register_support_handler(bot: AsyncTeleBot):
         if message.from_user.username:
             user_info = (
                 f"@{message.from_user.username}"
-                " (ID {message.from_user.id})"
+                f" (ID {message.from_user.id})"
             )
 
             for admin_id in ADMIN_IDS:

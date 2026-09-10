@@ -11,7 +11,8 @@ from config import (
 )
 from loads import (
     busy_users,
-    bot
+    bot,
+    banned
 )
 
 
@@ -43,6 +44,27 @@ class MaintenanceMiddleware(BaseMiddleware):
                 user_id,
                 "Бот на техническом обслуживании."
             )
+            return CancelUpdate()
+
+    async def post_process(self, message, data, exception):
+        pass
+
+
+class BanMiddleware(BaseMiddleware):
+    def __init__(self):
+        self.update_types = ['message', 'callback_query']
+
+    async def pre_process(self, message: Message, data):
+        user_id = message.from_user.id
+
+        if user_id in banned:
+            try:
+                await bot.send_message(
+                    user_id,
+                    "Вы забанены и не можете пользоваться ботом."
+                )
+            except Exception:
+                pass
             return CancelUpdate()
 
     async def post_process(self, message, data, exception):
