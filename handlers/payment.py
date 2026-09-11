@@ -88,7 +88,6 @@ def register_payment_handler(bot: AsyncTeleBot):
             call.message.chat.id
         ) as data:
             data["rate_id"] = param
-            print(f"selected rate: rate_id = {param}")
 
         await bot.edit_message_text(
             f"Переведите {rate_info['price']} рублей"
@@ -113,7 +112,6 @@ def register_payment_handler(bot: AsyncTeleBot):
                 call.message.chat.id
             ) as data:
                 rate_id = data.get("rate_id")
-                print(f"user confirm: rate_id = {rate_id}")
 
             rate_info = get_rate_by_id(rate_id)
             if rate_info is None:

@@ -28,7 +28,6 @@ BANNED_FILE: str = os.getenv("BANNED_USERS_FILE")
 
 
 class UserStates(StatesGroup):
-    waiting_for_name = State()
     awaiting_payment = State()
     pending_confirmation = State()
     waiting_for_help = State()
