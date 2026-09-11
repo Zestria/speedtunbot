@@ -25,7 +25,7 @@ def register_broadcast_handler(bot: AsyncTeleBot):
         if not text:
             await bot.send_message(
                 message.chat.id,
-                "Использование: /broadcast <текст>"
+                "❌ Использование: /broadcast <текст>"
             )
             return
 
@@ -34,7 +34,7 @@ def register_broadcast_handler(bot: AsyncTeleBot):
         except Exception as e:
             await bot.send_message(
                 message.chat.id,
-                f"Ошибка при работе с 3xui: {e}"
+                f"❌ Ошибка при работе с 3xui: {e}"
             )
             return
 
@@ -51,10 +51,19 @@ def register_broadcast_handler(bot: AsyncTeleBot):
             try:
                 await bot.send_message(
                     recipied_id,
-                    f"Объявление:\n\n{text}"
+                    f"📢 <b>Объявление</b>\n\n{text}",
+                    parse_mode="HTML"
                 )
                 sent += 1
             except Exception:
                 failed += 1
 
             await asyncio.sleep(0.1)
+
+            await bot.send_message(
+                message.chat.id,
+                f"✅ Рассылка завершена\n\n"
+                f"Успешно: <b>{sent}</b>\n"
+                f"Неудачно: <b>{failed}</b>",
+                parse_mode="HTML"
+            )

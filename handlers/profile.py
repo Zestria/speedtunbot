@@ -37,24 +37,31 @@ def register_profile_handler(bot: AsyncTeleBot):
                 break
 
         if existing_client is None:
-            non_existent_warn = "У вас ещё нет аккаунта. Передите в /start."
-            await bot.send_message(message.chat.id, non_existent_warn)
+            await bot.send_message(
+                message.chat.id,
+                "⚠️ У вас ещё нет аккаунта.\n\n"
+                "Перейдите в /start для регистрации."
+            )
             return
 
         sub_token: str = existing_client.sub_id
 
+        status_text = "🟢 Активна" if existing_client.enable else "🔴 Неактивна"
         expiry_date = "Бессрочно"
+
         if not existing_client.enable:
-            expiry_date = "Закончилась"
+            expiry_date = "Истекла"
         elif existing_client.expiry_time > 0:
             expiry_date = datetime.fromtimestamp(
                 existing_client.expiry_time / 1000
-                ).strftime("%d.%m.%Y %H:%M")
+            ).strftime("%d.%m.%Y %H:%M")
 
         client_info = (
-            "Моя подписка:\n"
-            f"Статус: {'Активна' if existing_client.enable else 'Неактивна'}\n"
-            f"Ссылка: {SUB_URL_BASE}{sub_token}\n"
-            f"Действует до: {expiry_date}"
+            "📱 <b>Моя подписка</b>\n\n"
+            f"Статус: {status_text}\n"
+            f"Действует до: {expiry_date}\n\n"
+            f"<b>Ссылка на подключение:</b>\n"
+            f"<code>{SUB_URL_BASE}{sub_token}</code>\n\n"
+            "Нажмите на ссылку или скопируйте её."
         )
-        await bot.send_message(message.chat.id, client_info)
+        await bot.send_message(message.chat.id, client_info, parse_mode="HTML")

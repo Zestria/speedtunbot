@@ -47,19 +47,24 @@ def register_payment_handler(bot: AsyncTeleBot):
                 break
 
         if existing_client is None:
-            non_existent_warn = "У вас ещё нет аккаунта. Передите в /start."
-            await bot.send_message(message.chat.id, non_existent_warn)
+            await bot.send_message(
+                message.chat.id,
+                "⚠️ У вас ещё нет аккаунта.\n\n"
+                "Перейдите в /start для регистрации."
+            )
             return
 
         select_rate_markup = quick_markup({
-            str(i+1): {"callback_data": f"pay:select_rate:{i+1}"}
-            for i in range(0, len(RATES))
+            str(i): {"callback_data": f"pay:select_rate:{i}"}
+            for i in range(1, len(RATES)+1)
         }, row_width=3)
 
         await bot.send_message(
             message.chat.id,
             compose_rates_text(RATES),
-            reply_markup=select_rate_markup)
+            reply_markup=select_rate_markup,
+            parse_mode="HTML"
+        )
 
     @bot.callback_query_handler(
         func=lambda call: call.data.startswith('pay:select_rate')
@@ -71,7 +76,7 @@ def register_payment_handler(bot: AsyncTeleBot):
         if rate_info is None:
             await bot.answer_callback_query(
                 call.id,
-                "Такого тарифа не существует."
+                "❌ Такого тарифа не существует."
             )
             return
 
@@ -90,14 +95,18 @@ def register_payment_handler(bot: AsyncTeleBot):
             data["rate_id"] = param
 
         await bot.edit_message_text(
-            f"Переведите {rate_info['price']} рублей"
-            f" на этот счёт {BANK_ACCOUNT_DETAILS}\n"
-            "Как оплатите, нажмите готово. Иначе отмените.",
+            f"💳 <b>Оплата тарифа</b>\n\n"
+            f"Сумма к оплате: <b>{rate_info['price']} ₽</b>\n\n"
+            f"Переведите средства на счёт:\n"
+            f"<code>{BANK_ACCOUNT_DETAILS}</code>\n\n"
+            "После оплаты нажмите ✅ Готово.\n"
+            "Если передумали — ❌ Отмена.",
             call.message.chat.id, call.message.id,
             reply_markup=quick_markup({
-                "Готово": {"callback_data": "pay:user_confirm:accept"},
-                "Отмена": {"callback_data": "pay:user_confirm:decline"}
-                }, row_width=2)
+                "✅ Готово": {"callback_data": "pay:user_confirm:accept"},
+                "❌ Отмена": {"callback_data": "pay:user_confirm:decline"}
+                }, row_width=2),
+            parse_mode="HTML"
         )
 
     @bot.callback_query_handler(
@@ -116,7 +125,8 @@ def register_payment_handler(bot: AsyncTeleBot):
             rate_info = get_rate_by_id(rate_id)
             if rate_info is None:
                 await bot.edit_message_text(
-                    "Тариф не найден или сессия истекла. Начните заново /pay",
+                    "❌ Тариф не найден или сессия истекла.\n"
+                    "Начните заново /pay",
                     call.message.chat.id,
                     call.message.id
                 )
@@ -124,10 +134,12 @@ def register_payment_handler(bot: AsyncTeleBot):
                 return
 
             await bot.edit_message_text(
-                "Заявка принята на рассмотрение. "
-                "По её решению Вам придёт ответ.",
+                "⏳ <b>Заявка принята</b>\n\n"
+                "Ваша заявка на рассмотрении.\n"
+                "Ожидайте подтверждения от администратора.",
                 call.message.chat.id,
-                call.message.id
+                call.message.id,
+                parse_mode="HTML"
             )
 
             await bot.set_state(
@@ -141,11 +153,11 @@ def register_payment_handler(bot: AsyncTeleBot):
                 user_info = f"@{call.from_user.username}"
 
             give_sub_markup = quick_markup({
-                "Одобрить": {
+                "✅ Одобрить": {
                     "callback_data": "pay:admin_confirm:accept:"
                     f"{call.from_user.id}:{call.message.chat.id}"
                 },
-                "Отклонить": {
+                "❌ Отклонить": {
                     "callback_data": "pay:admin_confirm:decline:"
                     f"{call.from_user.id}:{call.message.chat.id}"
                 }
@@ -154,13 +166,16 @@ def register_payment_handler(bot: AsyncTeleBot):
             for admin_id in ADMIN_IDS:
                 await bot.send_message(
                     admin_id,
-                    f"Пользователь {user_info} запросил подписку.\n"
-                    f"ID подписки: {rate_id}\n",
-                    reply_markup=give_sub_markup
+                    f"📥 <b>Новая заявка на оплату</b>\n\n"
+                    f"Пользователь: {user_info}\n"
+                    f"Тариф: <b>{rate_info['name']}</b>\n"
+                    f"Цена: <b>{rate_info['price']} ₽</b>",
+                    reply_markup=give_sub_markup,
+                    parse_mode="HTML"
                 )
         elif param == "decline":
             await bot.edit_message_text(
-                "Оформление подписки отменено.",
+                "❌ Оформление подписки отменено.",
                 call.message.chat.id,
                 call.message.id
             )
@@ -171,8 +186,8 @@ def register_payment_handler(bot: AsyncTeleBot):
     async def pending_confirmation_handler(message: Message):
         await bot.send_message(
             message.chat.id,
-            "Ваша заявка на подписку находится на рассмотрении."
-            "Дождитесь решения."
+            "⏳ Ваша заявка на рассмотрении.\n\n"
+            "Пожалуйста, дождитесь подтверждения."
         )
 
     @bot.callback_query_handler(
@@ -185,7 +200,7 @@ def register_payment_handler(bot: AsyncTeleBot):
         param = query[2]
         if not query[3].isdigit() or not query[4].isdigit():
             await bot.edit_message_text(
-                "user_id или chat_id не являлись числами.",
+                "❌ Ошибка: некорректные данные пользователя.",
                 call.message.chat.id,
                 call.message.id
             )
@@ -197,7 +212,7 @@ def register_payment_handler(bot: AsyncTeleBot):
         current_state = await bot.get_state(user_id, chat_id)
         if current_state != UserStates.pending_confirmation.name:
             await bot.edit_message_text(
-                "Заявка уже обработана.",
+                "⚠️ Заявка уже обработана.",
                 call.message.chat.id,
                 call.message.id
             )
@@ -214,7 +229,7 @@ def register_payment_handler(bot: AsyncTeleBot):
             if not rate_id or int(rate_id) > len(RATES):
                 await bot.send_message(
                     call.message.chat.id,
-                    "Тариф не найден или сессия истекла."
+                    "❌ Тариф не найден или сессия истекла."
                 )
                 await bot.delete_state(user_id, chat_id)
                 return
@@ -238,16 +253,20 @@ def register_payment_handler(bot: AsyncTeleBot):
 
                     await bot.send_message(
                         chat_id,
-                        "Ваша подписка успешно активирована!\n"
-                        f"Тариф: {rate_info['name']}\n"
-                        "Срок действия обновлён."
+                        "✅ <b>Подписка активирована!</b>\n\n"
+                        f"Тариф: <b>{rate_info['name']}</b>\n"
+                        "Срок действия обновлён.\n"
+                        "Проверить статус: /profile",
+                        parse_mode="HTML"
                     )
 
                     await bot.edit_message_text(
-                        f"Подписка ({rate_info['name']}) успешно выдана.\n"
-                        f"Пользователь: {user_id}.",
+                        f"✅ Подписка выдана\n\n"
+                        f"Тариф: <b>{rate_info['name']}</b>\n"
+                        f"Пользователь: {user_id}",
                         call.message.chat.id,
-                        call.message.id
+                        call.message.id,
+                        parse_mode="HTML"
                     )
 
                     await bot.delete_state(user_id, chat_id)
@@ -258,9 +277,13 @@ def register_payment_handler(bot: AsyncTeleBot):
                 )
         elif param == "decline":
             await bot.edit_message_text(
-                "Заявка пользователя отклонена.",
+                "❌ Заявка отклонена.",
                 call.message.chat.id,
                 call.message.id
             )
-            await bot.send_message(chat_id, "Ваша заявка была отклонена.")
+            await bot.send_message(
+                chat_id,
+                "❌ Ваша заявка была отклонена.\n"
+                "По вопросам: /support"
+            )
             await bot.delete_state(user_id, chat_id)

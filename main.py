@@ -42,11 +42,16 @@ async def maintenance_handler(message: Message):
             global IS_MAINTENANCE_MODE
             IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
             await asyncio.sleep(0)
-            text = "Режим тех. обслуживания выключен"
-            if IS_MAINTENANCE_MODE:
-                text = "Режим тех обслуживания включён"
 
-            await bot.send_message(message.from_user.id, text)
+            status = "🔴 <b>включён</b>"
+            if not IS_MAINTENANCE_MODE:
+                status = "🟢 <b>выключен</b>"
+            text = f"Режим техобслуживания {status}"
+            await bot.send_message(
+                message.from_user.id,
+                text,
+                parse_mode="HTML"
+            )
 
 
 # Админ может посмотреть список всех юзеров
@@ -73,7 +78,8 @@ async def ban_handler(message: Message):
     if len(parts) < 2 or not parts[1].isdigit():
         await bot.send_message(
             message.chat.id,
-            "Использование: /ban <tg_id>"
+            "❌ <b>Неверный формат</b>\nИспользуйте: <code>/ban &lt;tg_id&gt;</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -82,7 +88,7 @@ async def ban_handler(message: Message):
     if target_id in ADMIN_IDS:
         await bot.send_message(
             message.chat.id,
-            "Нельзя забанить администратора."
+            "⚠️ Нельзя забанить администратора."
         )
         return
     banned.add(target_id)
@@ -91,17 +97,19 @@ async def ban_handler(message: Message):
     try:
         await bot.send_message(
             target_id,
-            "Вы были забанены администратором и больше не можете "
-            "пользоваться ботом."
+            "🚫 <b>Вы забанены</b>\n\n"
+            "Вы были заблокированы администратором и больше не можете пользоваться ботом.",
+            parse_mode="HTML"
         )
     except Exception as e:
         await bot.send_message(
             message.chat.id,
-            f"Исключение: {e}"
+            f"⚠️ Ошибка отправки: {e}"
         )
     await bot.send_message(
         message.chat.id,
-        f"Пользователь {target_id} забанен."
+        f"✅ Пользователь <code>{target_id}</code> забанен.",
+        parse_mode="HTML"
     )
 
 
@@ -114,7 +122,8 @@ async def unban_handler(message: Message):
     if len(parts) < 2 or not parts[1].isdigit():
         await bot.send_message(
             message.chat.id,
-            "Использование: /unban <tg_id>"
+            "❌ <b>Неверный формат</b>\nИспользуйте: <code>/unban &lt;tg_id&gt;</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -123,7 +132,7 @@ async def unban_handler(message: Message):
     if target_id not in banned:
         await bot.send_message(
             message.chat.id,
-            "Этот пользователь не забанен."
+            "ℹ️ Этот пользователь не забанен."
         )
         return
 
@@ -133,14 +142,16 @@ async def unban_handler(message: Message):
     try:
         await bot.send_message(
             target_id,
-            "Вы были разбанены."
+            "✅ <b>Вы разбанены</b>\n\nТеперь вы снова можете пользоваться ботом.",
+            parse_mode="HTML"
         )
     except Exception:
         pass
 
     await bot.send_message(
         message.chat.id,
-        f"Пользователь {target_id} разбанен."
+        f"✅ Пользователь <code>{target_id}</code> разбанен.",
+        parse_mode="HTML"
     )
 
 
@@ -152,34 +163,34 @@ async def banned_list_handler(message: Message):
     if not banned:
         await bot.send_message(
             message.chat.id,
-            "Список забаненных пуст."
+            "📭 Список забаненных пуст."
         )
         return
 
-    text = "Забаненные пользователи:\n" + "\n".join(
-        str(tg_id) for tg_id in sorted(banned)
+    text = "<b>🚫 Забаненные пользователи:</b>\n\n" + "\n".join(
+        f"<code>{tg_id}</code>" for tg_id in sorted(banned)
     )
-    await bot.send_message(message.chat.id, text)
+    await bot.send_message(message.chat.id, text, parse_mode="HTML")
 
 
 async def main():
     await bot.delete_my_commands()
 
     commands = [
-        BotCommand("start", "Войти в аккаунт"),
-        BotCommand("profile", "Профиль"),
-        BotCommand("pay", "Оплата"),
-        BotCommand("support", "Служба поддержки")
+        BotCommand("start", "🚀 Запустить бота"),
+        BotCommand("profile", "👤 Мой профиль"),
+        BotCommand("pay", "💳 Оплата"),
+        BotCommand("support", "💬 Поддержка")
     ]
 
     await bot.set_my_commands(commands)
 
     admin_commands = commands + [
-        BotCommand("support_user", "Написать пользователю по id"),
-        BotCommand("maintenance", "Режим тех. обслуживания"),
-        BotCommand("ban", "Забанить пользователя"),
-        BotCommand("unban", "Разбанить пользователя"),
-        BotCommand("banned_list", "Список забаненных пользователей"),
+        BotCommand("support_user", "✉️ Написать пользователю"),
+        BotCommand("maintenance", "⚙️ Режим обслуживания"),
+        BotCommand("ban", "🚫 Забанить"),
+        BotCommand("unban", "✅ Разбанить"),
+        BotCommand("banned_list", "📋 Список забаненных"),
     ]
 
     for admin_id in ADMIN_IDS:

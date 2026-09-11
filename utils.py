@@ -34,10 +34,10 @@ def calculate_expiry_time(old_expiry_time: int | None, days: int) -> int:
 
 
 def compose_rates_text(rates):
-    text = ""
-    for i in range(0, len(rates)):
-        text += f"{i+1}) {rates[i]['name']}"
-        if i != len(rates) - 1:
+    text = "💳 <b>Доступные тарифы</b>\n\n"
+    for i in range(1, len(rates)+1):
+        text += f"{i}. <b>{rates[i-1]['name']}</b>"
+        if i != len(rates):
             text += "\n"
     return text
 

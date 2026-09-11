@@ -34,7 +34,12 @@ def register_start_handler(bot: AsyncTeleBot):
                     break
 
             if is_client_exist is not None:
-                await bot.send_message(message.chat.id, "С возвращением!")
+                await bot.send_message(
+                    message.chat.id,
+                    "👋 С возвращением!\n\n"
+                    "У вас уже есть активный аккаунт.\n"
+                    "Для просмотра подписки используйте /profile"
+                )
                 return
 
             # клиент отсутствует, значит нужно создать нового
@@ -49,6 +54,11 @@ def register_start_handler(bot: AsyncTeleBot):
             # иначе он enable=True изначально
             await api.client.update(new_client.id, new_client)
 
-            await bot.send_message(message.chat.id, "Добро пожаловать!")
+            await bot.send_message(
+                message.chat.id,
+                "🎉 Добро пожаловать!\n\n"
+                "Ваш аккаунт успешно создан.\n"
+                "Выберите тариф в меню /pay или узнайте больше о сервисе."
+            )
         except Exception as e:
             print(f"Ошибка при работе с 3xui: {e}")

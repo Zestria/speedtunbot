@@ -23,7 +23,8 @@ def register_support_handler(bot: AsyncTeleBot):
             )
             await bot.send_message(
                 message.chat.id,
-                "Вы вышли из режима поддержки."
+                "ℹ️ Вы вышли из режима поддержки.\n\n"
+                "Напишите снова /support, если нужна помощь."
             )
             return
 
@@ -34,8 +35,10 @@ def register_support_handler(bot: AsyncTeleBot):
         )
         await bot.send_message(
             message.chat.id,
-            "Опишите вашу проблему. Администратор ответит вам по возможности."
-            "Чтобы выйти из поддержки, ещё раз введите /support."
+            "💬 <b>Поддержка</b>\n\n"
+            "Опишите вашу проблему — администратор ответит в ближайшее время.\n\n"
+            "Для выхода из режима напишите /support ещё раз.",
+            parse_mode="HTML"
         )
 
     @bot.message_handler(
@@ -46,16 +49,18 @@ def register_support_handler(bot: AsyncTeleBot):
         user_info = f"ID {message.from_user.id}"
         if message.from_user.username:
             user_info = (
-                f"@{message.from_user.username}"
-                f" (ID {message.from_user.id})"
+                f"@{message.from_user.username}\n"
+                f"ID: {message.from_user.id}"
             )
 
-            for admin_id in ADMIN_IDS:
-                await bot.send_message(
-                    admin_id,
-                    f"Сообщение в поддержку от {user_info}:\n\n"
-                    f"{message.text}"
-                )
+        for admin_id in ADMIN_IDS:
+            await bot.send_message(
+                admin_id,
+                f"📨 <b>Новое обращение в поддержку</b>\n\n"
+                f"Пользователь: {user_info}\n\n"
+                f"{message.text}",
+                parse_mode="HTML"
+            )
 
     @bot.message_handler(commands='support_user')
     async def support_user_handler(message: Message):
@@ -75,14 +80,15 @@ def register_support_handler(bot: AsyncTeleBot):
             )
             await bot.send_message(
                 message.chat.id,
-                "Ваши сообщения больше не отправляются клиенту."
+                "ℹ️ Режим общения с клиентом завершён."
+
             )
             return
 
         if len(parts) < 2 or not parts[1].isdigit():
             await bot.send_message(
                 message.chat.id,
-                "Использование: /support_user <tg_id>."
+                "❌ Использование: /support_user <tg_id>"
             )
             return
 
@@ -102,8 +108,8 @@ def register_support_handler(bot: AsyncTeleBot):
 
         await bot.send_message(
             message.chat.id,
-            f"Все последующие сообщения будут пересланы {target_user_id}."
-            "Чтобы выйти, введите /support_user."
+            f"✉️ Теперь сообщения будут отправляться пользователю {target_user_id}.\n\n"
+            "Для выхода введите /support_user"
         )
 
     @bot.message_handler(
@@ -120,7 +126,7 @@ def register_support_handler(bot: AsyncTeleBot):
         if not target_user_id:
             await bot.send_message(
                 message.chat.id,
-                "Не найден пользователь, котором нужно писать."
+                "❌ Пользователь не найден."
             )
             await bot.delete_state(
                 message.from_user.id, message.chat.id
@@ -130,10 +136,12 @@ def register_support_handler(bot: AsyncTeleBot):
         try:
             await bot.send_message(
                 target_user_id,
-                f"Ответ от службы поддержки:\n\n{message.text}"
+                f"📩 <b>Ответ от поддержки</b>\n\n"
+                f"{message.text}",
+                parse_mode="HTML"
             )
         except Exception as e:
             await bot.send_message(
                 message.chat.id,
-                f"Не удалось отправить сообщение: {e}"
+                f"❌ Не удалось отправить сообщение: {e}"
             )
