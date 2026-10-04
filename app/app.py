@@ -12,6 +12,9 @@ import asyncio
 import logging
 
 from app.container import Container
+from app.db.migrate import upgrade_head
+from app.db.seeds import seed_all
+from app.db.session import create_engine_and_sessionmaker, ensure_sqlite_dir
 from app.logging_setup import configure_logging
 from app.settings import Settings, get_settings
 
@@ -21,6 +24,19 @@ logger = logging.getLogger(__name__)
 def build_container(settings: Settings) -> Container:
     """Build the process-wide container from the loaded settings."""
     return Container(settings=settings)
+
+
+async def init_database(container: Container) -> None:
+    """Create the data dir, run migrations, wire the engine and seed the DB."""
+    url = container.settings.database_url
+    ensure_sqlite_dir(url)
+    # Alembic's async env calls asyncio.run(); it must not run inside our loop.
+    await asyncio.to_thread(upgrade_head, url)
+    engine, sessionmaker = create_engine_and_sessionmaker(url)
+    container.engine = engine
+    container.sessionmaker = sessionmaker
+    async with container.db() as session:
+        await seed_all(session)
 
 
 def _warn_if_local_sub_url(settings: Settings) -> None:
@@ -70,6 +86,7 @@ async def run() -> None:
     )
     container = build_container(settings)
     _warn_if_local_sub_url(settings)
+    await init_database(container)
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.

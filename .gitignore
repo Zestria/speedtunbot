@@ -4,3 +4,5 @@ __pycache__
 banned_users.json
 .pytest_cache
 .ruff_cache
+.mypy_cache
+data/
