@@ -1,0 +1,35 @@
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+# Legacy modules are ported/removed in later M0 tasks; do not gate M0-01 on
+# lint errors that belong to unfinished code.
+extend-exclude = [
+    "config.py",
+    "loads.py",
+    "middlewares.py",
+    "utils.py",
+    "handlers/",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_unused_ignores = false
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+# Legacy modules are ported/removed in later M0 tasks; do not gate M0-01 on
+# type errors that belong to unfinished code.
+[[tool.mypy.overrides]]
+module = ["config", "loads", "middlewares", "utils", "handlers.*"]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

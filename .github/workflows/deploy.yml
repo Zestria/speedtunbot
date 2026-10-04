@@ -1,0 +1,9 @@
+name: deploy bot on vps
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps: Ж

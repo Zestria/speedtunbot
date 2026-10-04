@@ -5,6 +5,7 @@ from handlers.profile import register_profile_handler
 from handlers.payment import register_payment_handler
 from handlers.support import register_support_handler
 from handlers.broadcast import register_broadcast_handler
+from handlers.legacy_commands import register_legacy_admin_handlers
 
 
 def register_all_handlers(bot: AsyncTeleBot):
@@ -13,3 +14,4 @@ def register_all_handlers(bot: AsyncTeleBot):
     register_payment_handler(bot)
     register_support_handler(bot)
     register_broadcast_handler(bot)
+    register_legacy_admin_handlers(bot)
