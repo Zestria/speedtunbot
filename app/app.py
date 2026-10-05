@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app import texts
 from app.container import Container
 from app.db.migrate import upgrade_head
 from app.db.seeds import seed_all
 from app.db.session import create_engine_and_sessionmaker, ensure_sqlite_dir
 from app.error_handler import ErrorReporter, ErrorReporterMiddleware, run_polling
+from app.errors import PanelError
 from app.logging_setup import configure_logging
+from app.services.legacy_import import LegacyImporter
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -79,6 +82,48 @@ async def _publish_command_menus(bot: object, owner_ids: list[int]) -> None:
         )
 
 
+async def ensure_legacy_import(container: Container) -> int:
+    """Refuse to start (or import) when the panel has customers but the DB is empty.
+
+    ``/broadcast``, ``/ban`` and ``/pay`` read the ``users`` table and the legacy
+    JSON ban middleware is gone, so an un-imported panel leaves the bot blind
+    (``/ban`` → "unknown user", bans do not block, ``/pay`` hits the
+    ``payments → users`` foreign key). When the ``users`` table is empty **and**
+    the panel still carries numeric clients this either runs the idempotent import
+    (``AUTO_IMPORT_LEGACY=true``) or fails startup with an actionable message.
+    Returns how many ``users`` rows the automatic import created.
+    """
+    template = texts.LEGACY_IMPORT_REQUIRED
+    sessionmaker = container.sessionmaker
+    if sessionmaker is None or container.panel is None:
+        return 0
+    importer = LegacyImporter(
+        sessionmaker,
+        panel=container.panel,
+        bank_details=container.settings.bank_account_details,
+        banned_users_file=container.settings.banned_users_file,
+    )
+    try:
+        users = await importer.count_users()
+        if users:
+            return 0
+        customers = len(await importer.panel_customers())
+    except PanelError as exc:
+        # An unreachable panel is not proof of an empty deployment: never block
+        # startup on it, just say that the guard could not run.
+        logger.warning("legacy-import check skipped, panel unreachable: %s", exc)
+        return 0
+    if customers == 0:
+        return 0
+    if not container.settings.auto_import_legacy:
+        raise RuntimeError(template.format(clients=customers))
+    report = await importer.run()
+    logger.warning(
+        "AUTO_IMPORT_LEGACY imported the legacy deployment: %s", report.summary
+    )
+    return report.created
+
+
 async def run() -> None:
     """Load config, configure logging, build the container, then poll."""
     settings = get_settings()
@@ -95,6 +140,8 @@ async def run() -> None:
     container.init_panel()
     container.init_users()
     container.init_payments()
+    # Bug-fix pass: never run blind against an un-imported legacy deployment.
+    await ensure_legacy_import(container)
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.

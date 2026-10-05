@@ -126,6 +126,17 @@ PANEL_ALERT = "⚠️ Ошибка панели в {context}: {error}"
 MAINTENANCE_ON = "Режим техобслуживания 🔴 <b>включён</b>"
 MAINTENANCE_OFF = "Режим техобслуживания 🟢 <b>выключен</b>"
 
+# --- Startup guard (bug-fix pass) -----------------------------------------
+
+#: Raised at startup when ``users`` is empty but the panel still has customers.
+LEGACY_IMPORT_REQUIRED = (
+    "База данных пуста, но на панели найдено клиентов: {clients}.\n"
+    "Похоже, бот запускается поверх развёртывания старого бота: рассылка, "
+    "/ban и /pay будут работать некорректно.\n"
+    "Выполните `python -m app.cli import-legacy` (или включите "
+    "AUTO_IMPORT_LEGACY=true) и запустите сервис снова."
+)
+
 # --- /pay (M0-10) ----------------------------------------------------------
 
 PAYMENT_NO_ACCOUNT = "⚠️ У вас ещё нет аккаунта.\n\nПерейдите в /start для регистрации."

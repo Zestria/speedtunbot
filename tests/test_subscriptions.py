@@ -12,7 +12,9 @@ from app.services.subscriptions import (
     UNLIMITED_REASON,
     GrantResult,
     SubscriptionService,
+    base_expiry_ms,
     calculate_expiry_ms,
+    is_unlimited,
     now_ms,
 )
 from tests.fakes import FakePanel
@@ -75,6 +77,47 @@ async def test_grant_days_on_unlimited_client_is_a_no_op() -> None:
     client = await panel.get_client(1)
     assert client is not None and client.expiry_time == 0
     assert "mutate" in panel.calls  # verification path still consulted the panel
+
+
+@pytest.mark.parametrize(
+    ("expiry_ms", "enabled", "unlimited"),
+    [
+        (0, True, True),  # perpetual
+        (0, False, False),  # legacy placeholder: never activated
+        (NOW, True, False),
+        (None, True, False),
+    ],
+)
+def test_is_unlimited_requires_enabled(
+    expiry_ms: int | None, enabled: bool, unlimited: bool
+) -> None:
+    """AC: ``expiry == 0`` alone is *not* unlimited — the client must be enabled."""
+    assert is_unlimited(expiry_ms, enabled) is unlimited
+
+
+def test_base_expiry_counts_a_disabled_placeholder_from_now() -> None:
+    """AC: a never-activated legacy client is extended from now, not made perpetual."""
+    assert base_expiry_ms(0, False, NOW) == NOW
+    assert base_expiry_ms(None, False, NOW) == NOW
+    assert base_expiry_ms(0, True, NOW) == 0  # perpetual stays perpetual
+    assert base_expiry_ms(NOW + 5, False, NOW) == NOW + 5
+
+
+async def test_grant_days_on_a_legacy_placeholder_sets_a_finite_expiry() -> None:
+    """AC: ``expiry==0`` + ``enable=False`` gets explicit days from now (no forever)."""
+    panel = FakePanel()
+    panel.seed(1, expiry_ms=0, enable=False)
+    service = SubscriptionService(panel)  # type: ignore[arg-type]
+
+    before = now_ms()
+    result = await service.grant_days(1, 30)
+    after = now_ms()
+
+    assert result.changed is True
+    assert result.reason is None
+    assert before + 30 * MS_PER_DAY <= result.expiry_ms <= after + 30 * MS_PER_DAY
+    client = await panel.get_client(1)
+    assert client is not None and int(client.expiry_time) == result.expiry_ms
 
 
 async def test_concurrent_grants_add_up() -> None:

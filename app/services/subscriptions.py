@@ -24,6 +24,37 @@ MS_PER_DAY = 86_400_000
 UNLIMITED_REASON = "клиент бессрочный"
 
 
+def is_unlimited(expiry_ms: int | None, enabled: bool) -> bool:
+    """Return ``True`` **only** for a perpetual client.
+
+    A client is unlimited when ``expiry_time == 0`` **and** it is enabled. The
+    legacy import shape — a client created with ``enable=False`` and
+    ``expiry_time == 0`` — has never been activated and must not be mistaken for
+    a lifetime subscription (otherwise a grant would enable it forever and a
+    ``/unban`` would activate it indefinitely). An unknown (``None``) expiry is
+    never assumed to be perpetual.
+    """
+    if expiry_ms is None:
+        return False
+    return int(expiry_ms) == 0 and bool(enabled)
+
+
+def base_expiry_ms(expiry_ms: int | None, enabled: bool, now: int) -> int:
+    """Normalise a panel expiry for :func:`calculate_expiry_ms`.
+
+    An unset expiry on a **disabled** client (never activated) counts from
+    ``now``, so extending it produces a finite date instead of a perpetual
+    (``0``) one; ``0`` on an enabled client stays ``0``. An unknown (``None``)
+    expiry also counts from ``now``.
+    """
+    if expiry_ms is None:
+        return int(now)
+    value = int(expiry_ms)
+    if value == 0 and not enabled:
+        return int(now)
+    return value
+
+
 def calculate_expiry_ms(old_ms: int | None, days: int, now_ms: int) -> int:
     """Return the new expiry timestamp (epoch ms) after adding ``days``.
 
@@ -32,6 +63,10 @@ def calculate_expiry_ms(old_ms: int | None, days: int, now_ms: int) -> int:
     * ``old_ms`` is ``0`` → ``0`` (perpetual: never modified);
     * ``old_ms`` is in the future → extend from the future date;
     * ``old_ms`` is in the past (expired) → extend from ``now_ms``.
+
+    Callers that read the value straight off a panel client must run it through
+    :func:`base_expiry_ms` first, so a disabled placeholder (``0`` with
+    ``enable=False``) counts from ``now``.
     """
     delta = int(days) * MS_PER_DAY
     if old_ms is None or old_ms < 0:
@@ -72,9 +107,10 @@ class SubscriptionService:
         expected: dict[str, int] = {}
 
         def apply(client: Client) -> bool:
-            if client.expiry_time == 0:
+            if is_unlimited(client.expiry_time, bool(client.enable)):
                 return False  # perpetual — leave untouched
-            ms = calculate_expiry_ms(client.expiry_time, days, now_ms())
+            base_ms = base_expiry_ms(client.expiry_time, bool(client.enable), now_ms())
+            ms = calculate_expiry_ms(base_ms, days, now_ms())
             expected["ms"] = ms
             client.expiry_time = ms
             return True

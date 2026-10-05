@@ -21,7 +21,7 @@ from app.container import Container
 from app.db.models import CardKind, ReceiptKind, UserStatus
 from app.db.repositories import admin_cards as admin_cards_repo
 from app.db.repositories import tariffs as tariffs_repo
-from app.errors import AlreadyProcessed, InvalidCallback, PanelError
+from app.errors import AlreadyProcessed, InvalidCallback, NotRegistered, PanelError
 from app.handlers.common import alert_staff, reply
 from app.handlers.support import support_media
 from app.permissions import Permission, check_callback
@@ -170,7 +170,13 @@ async def _select_tariff(
         return
 
     tg_id = int(call.from_user.id)
-    payment = await payments.create(tg_id, tariff)
+    try:
+        payment = await payments.create(tg_id, tariff)
+    except NotRegistered:
+        # ``payments.user_tg_id`` is a FK into ``users``: refuse gracefully instead
+        # of letting an IntegrityError escape (the user must run /start first).
+        await _answer(bot, call, texts.PAYMENT_NO_ACCOUNT, alert=True)
+        return
     bank_details = await _bank_details(container)
     if not bank_details:
         await _answer(bot, call, texts.PAYMENT_NO_BANK_DETAILS)

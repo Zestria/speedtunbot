@@ -38,3 +38,11 @@ class InvalidCallback(AppError):
 
 class AlreadyProcessed(AppError):
     """The entity was already handled (idempotency guard)."""
+
+
+class NotRegistered(AppError):
+    """The Telegram user has no ``users`` row yet.
+
+    Raised instead of letting a foreign-key violation escape (a ``payments`` row
+    references ``users.tg_id``); the user must run ``/start`` first.
+    """

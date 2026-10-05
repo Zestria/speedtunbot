@@ -32,13 +32,15 @@ from app.db.models import CardKind, Payment, PaymentStatus, ReceiptKind, Tariff
 from app.db.repositories import payments as payments_repo
 from app.db.repositories import users as users_repo
 from app.db.repositories.payments import ACTIVE_STATUSES, PENDING_STATUSES
-from app.errors import AlreadyProcessed, ClientNotFound, PanelError
+from app.errors import AlreadyProcessed, ClientNotFound, NotRegistered, PanelError
 from app.services.audit import AuditService
 from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
 from app.services.subscriptions import (
     SubscriptionService,
+    base_expiry_ms,
     calculate_expiry_ms,
+    is_unlimited,
     now_ms,
 )
 from app.utils.text import esc
@@ -91,9 +93,15 @@ class PaymentService:
         The snapshot fields (name/days/price) are copied now, so a later tariff
         edit never rewrites history. The partial unique index allows at most one
         active payment per user, so a second call returns the existing row.
+
+        ``payments.user_tg_id`` is a foreign key into ``users``, so a missing row
+        would surface as an opaque ``IntegrityError``: that case raises
+        :class:`NotRegistered` instead (the user must run ``/start`` first).
         """
         sessionmaker = self._require_sessionmaker()
         async with sessionmaker() as session:
+            if await users_repo.get(session, int(tg_id)) is None:
+                raise NotRegistered(texts.PAYMENT_NO_ACCOUNT)
             existing = await payments_repo.get_active_for_user(session, int(tg_id))
             if existing is not None:
                 return existing
@@ -369,8 +377,11 @@ class PaymentService:
 
         The intended expiry (``expiry_after_ms``) is persisted **before** the
         panel write, so a retry after a lost response can compare the live expiry
-        against it and skip a second grant. An unlimited client
-        (``expiry_time == 0``) is enabled but never shortened (§M0-10 AC).
+        against it and skip a second grant. A *perpetual* client
+        (``expiry_time == 0`` **and** enabled) is enabled but never shortened
+        (§M0-10 AC); a legacy placeholder (``expiry_time == 0`` with
+        ``enable=False``) has never been activated and therefore gets a **finite**
+        expiry counted from now.
         """
         subscriptions = self._subscriptions
         panel = self._panel
@@ -381,9 +392,13 @@ class PaymentService:
         if client is None:
             raise ClientNotFound(str(tg_id))
         current_ms = int(client.expiry_time or 0)
+        enabled = bool(client.enable)
+        # Read *before* enabling: a perpetual client stays 0/enabled, the legacy
+        # placeholder (0/disabled) must count its window from now instead.
+        perpetual = is_unlimited(current_ms, enabled)
         # Enable first — idempotent, so a retry may repeat it safely.
         await subscriptions.freeze(tg_id, frozen=False)
-        if current_ms == 0:
+        if perpetual:
             # Perpetual: enable only, never shorten. Record the no-op window so
             # the audit trail and a retry both see an explicit ``0``.
             await self._record_target(payment.id, before_ms=0, target_ms=0)
@@ -404,7 +419,8 @@ class PaymentService:
             )
             return
         if not target_ms:
-            target_ms = calculate_expiry_ms(current_ms, int(payment.days), now_ms())
+            base_ms = base_expiry_ms(current_ms, enabled, now_ms())
+            target_ms = calculate_expiry_ms(base_ms, int(payment.days), now_ms())
             await self._record_target(
                 payment.id, before_ms=current_ms, target_ms=target_ms
             )
@@ -541,7 +557,12 @@ class PaymentService:
         return None if user is None else user.username
 
     async def _current_expiry(self, tg_id: int) -> int:
-        """Return the client's current expiry (``0`` = unlimited/unknown)."""
+        """Return the client's *effective* expiry (``0`` = truly unlimited).
+
+        A legacy placeholder (``expiry_time == 0`` with ``enable=False``) has never
+        been activated, so it reports the base ``now`` instead of ``0``: the review
+        card then shows a finite date and no "бессрочно" warning.
+        """
         panel = self._panel
         if panel is None:
             return 0
@@ -549,7 +570,13 @@ class PaymentService:
             client = await panel.get_client(int(tg_id))
         except PanelError:
             return 0
-        return 0 if client is None else int(client.expiry_time or 0)
+        if client is None:
+            return 0
+        expiry_ms = int(client.expiry_time or 0)
+        enabled = bool(client.enable)
+        if is_unlimited(expiry_ms, enabled):
+            return 0
+        return base_expiry_ms(expiry_ms, enabled, now_ms())
 
     async def _audit_log(
         self, actor: int | None, action: str, payment_id: int, **details: Any

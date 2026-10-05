@@ -464,6 +464,31 @@ async def test_unban_leaves_an_expired_client_disabled(
     assert fake_bot.texts_to(CHAT) == [texts.UNBAN_EXPIRED.format(tg_id=USER)]
 
 
+async def test_unban_pins_a_never_activated_legacy_client(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC: ``expiry==0`` + ``enable=False`` is never activated, so unban skips it.
+
+    The client must not be enabled forever (the legacy placeholder bug); instead its
+    unset expiry is pinned to ``now`` so it can never be read as unlimited again.
+    """
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+    panel.seed(USER, enable=False, expiry_ms=0)
+    await add_user(session_factory, USER, UserStatus.BLOCKED)
+
+    await unban_command(message(OWNER, f"/unban {USER}"), fake_bot, handler_container)
+
+    assert await status_of(session_factory, USER) == UserStatus.APPROVED
+    assert await client_enabled(USER, handler_container) is False
+    client = await panel.get_client(USER)
+    assert client is not None
+    assert 0 < int(client.expiry_time) <= int(time.time() * 1000) + 1000
+    assert fake_bot.texts_to(CHAT) == [texts.UNBAN_EXPIRED.format(tg_id=USER)]
+
+
 async def test_unban_retries_the_panel_for_an_approved_user(
     handler_container: Container,
     fake_bot: FakeBot,

@@ -6,10 +6,13 @@ middleware just refreshes an existing row. This service owns that write plus the
 stay *parse input → check permission → call a service → render* (§0.1 rule 3).
 
 Block semantics (§0.2): blocking a user also **disables** the panel client;
-unblocking re-enables it **only while the subscription has not expired**. A panel
-outage never loses the state change — the DB row is written first and the panel
-call is best effort, reporting its failure through :attr:`AccessChange.panel_error`
-so the admin still gets an answer (§0.1 rule 7; see ``docs/DECISIONS.md``).
+unblocking re-enables it **only while the subscription has not expired** — and a
+client whose expiry is unset (``0``) is only perpetual when it is enabled, so a
+never-activated legacy client is pinned to ``now`` instead of being activated
+indefinitely. A panel outage never loses the state change — the DB row is written
+first and the panel call is best effort, reporting its failure through
+:attr:`AccessChange.panel_error` so the admin still gets an answer (§0.1 rule 7;
+see ``docs/DECISIONS.md``).
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from app.db.models import User, UserStatus
 from app.db.repositories import users as users_repo
 from app.services.audit import AuditService
 from app.services.panel import PanelGateway
+from app.services.subscriptions import is_unlimited
 
 logger = logging.getLogger(__name__)
 
@@ -162,15 +166,26 @@ class UserService:
             )
         elif traffic is None:
             change = AccessChange(int(tg_id), UserStatus.APPROVED, client_action=None)
-        elif traffic.expiry_ms == 0 or traffic.expiry_ms > now_ms():
+        elif is_unlimited(traffic.expiry_ms, traffic.enable) or (
+            traffic.expiry_ms > now_ms()
+        ):
             action, error = await self._panel_disable(int(tg_id), enabled=True)
             change = AccessChange(
                 int(tg_id), UserStatus.APPROVED, client_action=action, panel_error=error
             )
         else:
-            # Expired subscription: unban restores bot access only (§0.2).
+            # Expired subscription *or* a never-activated legacy client
+            # (``expiry_time == 0`` with ``enable=False``): unban restores bot
+            # access only (§0.2). Pinning the unset expiry to ``now`` keeps the
+            # client from ever being mistaken for a lifetime one again.
+            error = None
+            if traffic.expiry_ms == 0:
+                error = await self._pin_expiry(int(tg_id))
             change = AccessChange(
-                int(tg_id), UserStatus.APPROVED, client_action="skipped"
+                int(tg_id),
+                UserStatus.APPROVED,
+                client_action="skipped",
+                panel_error=error,
             )
         await self._audit_log(
             actor,
@@ -295,6 +310,22 @@ class UserService:
             logger.warning("panel set_enabled failed for %s: %s", tg_id, exc)
             return None, str(exc)
         return ("enabled" if enabled else "disabled"), None
+
+    async def _pin_expiry(self, tg_id: int) -> str | None:
+        """Best-effort: give an unset expiry (``0``) the explicit value ``now``.
+
+        A legacy client created disabled with ``expiry_time == 0`` must not stay
+        indistinguishable from a perpetual one, otherwise the next ``/unban``
+        would activate it forever (returns the error string, if any).
+        """
+        if self._panel is None:
+            return "panel is not configured"
+        try:
+            await self._panel.set_expiry_ms(int(tg_id), now_ms())
+        except Exception as exc:  # surfaced to the admin as a warning line
+            logger.warning("panel set_expiry failed for %s: %s", tg_id, exc)
+            return str(exc)
+        return None
 
     async def _audit_log(
         self,

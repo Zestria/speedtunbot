@@ -6,7 +6,11 @@ Acceptance criteria covered:
 * a restart between submit and approve keeps the card working (state in DB);
 * a panel failure during approve keeps ``approved`` with ``applied_at IS NULL``
   (never reverted) so a retry finishes the job without double-granting days;
-* an unlimited client is enabled but never shortened;
+* a perpetual client (``expiry == 0`` **and** enabled) is enabled but never
+  shortened, while a legacy placeholder (``expiry == 0`` with ``enable=False``)
+  gets a finite expiry counted from now;
+* ``create`` refuses a Telegram user without a ``users`` row instead of raising a
+  foreign-key error (the ``pay:sel`` callback answers gracefully);
 * a stale/malformed callback answers "Кнопка устарела" without crashing;
 * a free-text message from a user with a pending payment gets the
   "заявка на рассмотрении" reply (no FSM read);
@@ -37,7 +41,7 @@ from app.db.models import (
     UserStatus,
 )
 from app.db.repositories import users as users_repo
-from app.errors import AlreadyProcessed, PanelError
+from app.errors import AlreadyProcessed, NotRegistered, PanelError
 from app.handlers.payment import pay_callback, payment_media, pending_notice
 from app.services.payments import PaymentService
 from app.services.subscriptions import MS_PER_DAY, now_ms
@@ -291,10 +295,10 @@ async def test_unlimited_client_is_not_shortened(
     fake_bot: FakeBot,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """AC: a perpetual client is enabled but its expiry stays ``0`` (M0-10.4)."""
+    """AC: a perpetual client (expiry ``0`` *and* enabled) is not shortened."""
     await seed_user(session_factory, USER)
     tariff = await seed_tariff(session_factory)
-    panel_of(handler_container).seed(USER, expiry_ms=0, enable=False)
+    panel_of(handler_container).seed(USER, expiry_ms=0, enable=True)
 
     payments = payments_of(handler_container)
     payment = await payments.create(USER, tariff)
@@ -308,6 +312,61 @@ async def test_unlimited_client_is_not_shortened(
     assert row.expiry_before_ms == 0
     assert row.expiry_after_ms == 0
     assert [text for chat, text in fake_bot.sent if chat == USER]
+
+
+async def test_legacy_placeholder_client_gets_a_finite_expiry(
+    handler_container: Container,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC: ``expiry==0`` + ``enable=False`` is never activated → days from now.
+
+    The legacy import shape (created disabled, ``expiry_time=0``) must not become a
+    lifetime subscription just because a payment was approved.
+    """
+    await seed_user(session_factory, USER)
+    tariff = await seed_tariff(session_factory, days=30)
+    panel_of(handler_container).seed(USER, expiry_ms=0, enable=False)
+
+    payments = payments_of(handler_container)
+    payment = await payments.create(USER, tariff)
+    await payments.submit(payment.id)
+    before = now_ms()
+    row = await payments.approve(payment.id, ADMIN)
+    after = now_ms()
+
+    client = await panel_of(handler_container).get_client(USER)
+    assert client is not None
+    assert bool(client.enable) is True
+    expiry = int(client.expiry_time)
+    assert expiry != 0  # finite, not unlimited
+    assert before + 30 * MS_PER_DAY <= expiry <= after + 30 * MS_PER_DAY
+    assert row.expiry_before_ms == 0
+    assert row.expiry_after_ms == expiry
+
+
+async def test_create_refuses_a_user_without_a_row(
+    handler_container: Container, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """AC: ``/pay`` never raises an FK error for an unregistered Telegram user."""
+    tariff = await seed_tariff(session_factory)  # no ``users`` row for USER
+
+    with pytest.raises(NotRegistered):
+        await payments_of(handler_container).create(USER, tariff)
+
+
+async def test_admin_callback_selecting_a_tariff_answers_gracefully(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC: a crafted ``pay:sel`` from an unregistered user gets a friendly answer."""
+    tariff = await seed_tariff(session_factory)
+
+    await pay_callback(
+        make_call("sel", int(tariff.id), user_id=USER), fake_bot, handler_container
+    )
+
+    assert fake_bot.callback_answers[-1][1] == texts.PAYMENT_NO_ACCOUNT
 
 
 async def test_approve_notifies_user_and_writes_audit(
