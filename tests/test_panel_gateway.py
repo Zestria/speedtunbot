@@ -421,9 +421,36 @@ async def test_server_status_returns_dict(settings: Settings) -> None:
     assert status["cpu"] == 3.0
 
 
-async def test_unsupported_operations_raise(settings: Settings) -> None:
+async def test_download_panel_db_is_unsupported(settings: Settings) -> None:
     gateway = make_gateway(settings, StubApi())
     with pytest.raises(NotSupportedError):
-        await gateway.restart_xray()
-    with pytest.raises(NotSupportedError):
         await gateway.download_panel_db()
+
+
+async def test_restart_xray_posts_the_confirmed_route(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§S2-5.1: the raw ``restartXrayService`` route with the bearer token."""
+    gateway = make_gateway(settings, StubApi())
+    calls: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setattr(panel_mod.httpx, "AsyncClient", recording_http_client(calls))
+
+    await gateway.restart_xray()
+
+    url, headers = calls[0]
+    assert url == "https://panel.example.com/panel/api/server/restartXrayService"
+    assert headers["Authorization"] == "Bearer vpn-token-value"
+
+
+async def test_restart_xray_maps_a_transport_error(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway = make_gateway(settings, StubApi())
+    monkeypatch.setattr(
+        panel_mod.httpx,
+        "AsyncClient",
+        recording_http_client([], error=httpx.ConnectError("boom")),
+    )
+
+    with pytest.raises(PanelUnavailable):
+        await gateway.restart_xray()

@@ -138,17 +138,25 @@ class Notifier:
 
     # --- safe delivery (§2.9 / M0-07) --------------------------------------
 
-    async def safe_send(self, chat_id: int, text: str, **kwargs: Any) -> bool:
+    async def safe_send(
+        self, chat_id: int, text: str, *, patient: bool = False, **kwargs: Any
+    ) -> bool:
         """Send ``text`` to ``chat_id`` without ever raising (returns ``bool``).
 
         Retries once on 429 using ``retry_after``; a 403 / "chat not found"
         reply marks the user ``bot_blocked`` and returns ``False``.
+
+        ``patient=True`` (§S2-6.5) honours ``retry_after`` **fully**: it always
+        sleeps the delay Telegram asks for and retries once, ignoring
+        :data:`MAX_RETRY_AFTER`. Only the broadcast loop opts in — every other
+        caller keeps the capped behaviour so a long rate-limit never stalls a
+        time-sensitive fan-out.
         """
-        delivered, _ = await self._deliver(chat_id, text, **kwargs)
+        delivered, _ = await self._deliver(chat_id, text, patient=patient, **kwargs)
         return delivered
 
     async def _deliver(
-        self, chat_id: int, text: str, **kwargs: Any
+        self, chat_id: int, text: str, *, patient: bool = False, **kwargs: Any
     ) -> tuple[bool, int | None]:
         """Send once (with the 429 retry) and report success + message id."""
         bot = self._bot
@@ -158,7 +166,9 @@ class Notifier:
         try:
             message = await bot.send_message(chat_id, text, **kwargs)
         except ApiTelegramException as exc:
-            return await self._handle_api_error(chat_id, text, kwargs, exc)
+            return await self._handle_api_error(
+                chat_id, text, kwargs, exc, patient=patient
+            )
         except Exception:  # pragma: no cover - other transport/bot errors
             logger.warning("safe_send to %s failed", chat_id, exc_info=True)
             return False, None
@@ -170,6 +180,8 @@ class Notifier:
         text: str,
         kwargs: dict[str, Any],
         exc: ApiTelegramException,
+        *,
+        patient: bool = False,
     ) -> tuple[bool, int | None]:
         """Apply the 429 retry / blocked-chat policy for one failed send."""
         bot = self._bot
@@ -177,7 +189,7 @@ class Notifier:
             return False, None
         if getattr(exc, "error_code", None) == 429:
             delay = _retry_after(exc)
-            if delay > MAX_RETRY_AFTER:
+            if not patient and delay > MAX_RETRY_AFTER:
                 logger.warning(
                     "rate limited for %.1fs (> %.1fs cap) sending to %s; "
                     "giving up this send",

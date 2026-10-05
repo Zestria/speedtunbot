@@ -21,3 +21,7 @@ class UserStates(StatesGroup):
     admin_search = State()
     #: Admin user card: waiting for a hand-typed day count (§S2-3.6).
     admin_grant = State()
+    #: Admin broadcast: waiting for the announcement text (§S2-6.3).
+    admin_broadcast = State()
+    #: Admin settings screen: waiting for the new bank details (§S2-7.3).
+    admin_bank = State()

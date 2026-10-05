@@ -210,17 +210,28 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
     assert labels_of(owner) == [
         "👥 Пользователи",
         "💳 Платежи",
+        "🖥 Сервер",
+        "📢 Рассылка",
         "⚙️ Настройки",
         "🔄 Обновить",
     ]
-    # ``admin`` keeps ``users.view``/``payments.view`` but not ``settings.edit``.
-    assert labels_of(admin) == ["👥 Пользователи", "💳 Платежи", "🔄 Обновить"]
+    # ``admin`` keeps ``users.view``/``payments.view`` and ``server.view`` but
+    # not ``settings.edit``.
+    assert labels_of(admin) == [
+        "👥 Пользователи",
+        "💳 Платежи",
+        "🖥 Сервер",
+        "📢 Рассылка",
+        "🔄 Обновить",
+    ]
     assert labels_of(support) == ["👥 Пользователи", "🔄 Обновить"]
     assert labels_of(stranger) == ["🔄 Обновить"]
     assert payloads_of(owner)[-1] == "adm:menu"
-    # ``server``/``broadcast`` are unregistered here → no dead button.
-    assert "adm:payments" in payloads_of(owner)
-    assert "adm:server" not in payloads_of(owner)
+    # ``server`` (S2-5) and ``broadcast`` (S2-6) are registered by import;
+    # ``audit`` is still unbuilt → no dead button for it.
+    assert "adm:server" in payloads_of(owner)
+    assert "adm:broadcast" in payloads_of(owner)
+    assert "adm:audit" not in payloads_of(owner)
 
 
 # --- /admin command (§S2-1.8) ------------------------------------------------

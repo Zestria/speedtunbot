@@ -55,6 +55,8 @@ class FakePanel:
         self.drop_writes = False
         self.latency = 0.0
         self.calls: list[str] = []
+        #: Toggled by ``restart_xray`` so the server screen shows the effect (§S2-5.2).
+        self.xray_running = True
 
     # --- test helpers ------------------------------------------------------
 
@@ -128,7 +130,17 @@ class FakePanel:
 
     async def server_status(self) -> dict[str, Any]:
         self._guard("server_status")
-        return {"cpu": 1.0, "mem": 2.0, "online": len(self._clients)}
+        return {
+            "cpu": 18.0,
+            "mem": {"current": 52, "total": 100},
+            "disk": {"current": 31, "total": 100},
+            "uptime": 1_058_400,
+            "xray": {
+                "state": "running" if self.xray_running else "stopped",
+                "version": "1.8",
+            },
+            "online": len(self._clients),
+        }
 
     # --- writes ------------------------------------------------------------
 
@@ -239,8 +251,9 @@ class FakePanel:
         self._clients.pop(int(tg_id), None)
 
     async def restart_xray(self) -> None:
+        """Record the call and toggle the fake Xray state (§S2-5.2)."""
         self._guard("restart_xray")
-        raise NotSupportedError("Xray restart is not supported by py3xui")
+        self.xray_running = not self.xray_running
 
     async def download_panel_db(self, path: str = "") -> None:
         self._guard("download_panel_db")

@@ -7,6 +7,7 @@ and the error-signature limiter (fixes B2).
 
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -171,6 +172,27 @@ async def test_safe_send_gives_up_when_retry_after_exceeds_cap(
     assert await notifier.safe_send(OWNER, "hi") is False
     assert bot.attempts == 1  # no retry, no 60s sleep
     assert bot.sent == []
+
+
+async def test_safe_send_patient_honours_a_long_retry_after(
+    settings: Settings,
+    db_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``patient=True`` (§S2-6.5) sleeps the full delay and still delivers."""
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.services.notifier.asyncio.sleep", fake_sleep)
+    bot = FlakyBot([_api_error(429, "Too Many Requests", retry_after=60)])
+    notifier = Notifier(_service(settings, db_factory), bot=bot)
+
+    assert await notifier.safe_send(OWNER, "hi", patient=True) is True
+    assert slept == [60.0]  # the capped path would have given up instead
+    assert bot.attempts == 2
+    assert bot.sent == [(OWNER, "hi")]
 
 
 async def test_bot_blocked_bookkeeping_failure_does_not_abort_fan_out(

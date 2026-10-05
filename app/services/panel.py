@@ -464,8 +464,28 @@ class PanelGateway:
             raise PanelError(f"client {tg_id} still present after delete")
 
     async def restart_xray(self) -> None:
-        """Not supported by ``py3xui`` (``docs/panel_api_notes.md`` M0-03)."""
-        raise NotSupportedError("Xray restart is not supported by py3xui")
+        """Restart the panel's Xray service (§S2-5.1).
+
+        ``py3xui`` 0.7.0 has no wrapper, so the confirmed 3x-ui route
+        (``POST /panel/api/server/restartXrayService``) is called directly in
+        token mode — the same raw-HTTP style :meth:`_reset_stats_raw` uses
+        (``docs/panel_api_notes.md`` §1, Q6). This **replaces** the earlier
+        ``NotSupportedError`` decision, but is still **never** called by bot
+        logic on its own: only the owner's confirmed button reaches it.
+        """
+        await self._call(lambda: self._restart_xray_raw())
+
+    async def _restart_xray_raw(self) -> None:
+        """Raw restart route, mirroring :meth:`_reset_stats_raw`."""
+        base = self._settings.domain.rstrip("/")
+        url = f"{base}/panel/api/server/restartXrayService"
+        headers = {
+            "Authorization": f"Bearer {self._settings.vpn_token}",
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as http:
+            response = await http.post(url, headers=headers)
+            response.raise_for_status()
 
     async def download_panel_db(self, path: str = "") -> None:
         """Not supported by ``py3xui`` (``docs/panel_api_notes.md`` M0-03)."""

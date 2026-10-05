@@ -27,6 +27,7 @@ from app.container import Container
 from app.db.models import Admin, AuditLog, UserStatus
 from app.db.repositories import users as users_repo
 from app.handlers import broadcast
+from app.handlers.admin.nav import admin_callback
 from app.handlers.ban import ban_command, banned_list_command, unban_command
 from app.handlers.support import (
     enter_support,
@@ -252,56 +253,36 @@ def _no_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(broadcast, "PACING", 0.0)
 
 
-async def test_broadcast_sends_one_summary_and_escapes_the_text(
+def _cb(data: str, *, message_id: int = 500) -> SimpleNamespace:
+    """Minimal ``CallbackQuery``: only the fields the handlers read."""
+    return SimpleNamespace(
+        id=f"cb-{message_id}",
+        data=data,
+        from_user=SimpleNamespace(id=OWNER, username="neo", first_name="Neo"),
+        message=SimpleNamespace(
+            chat=SimpleNamespace(id=CHAT), message_id=message_id, photo=None
+        ),
+    )
+
+
+async def test_broadcast_command_reaches_the_audience_step(
     handler_container: Container,
     fake_bot: FakeBot,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """B3/AC: exactly one summary, only approved reachable users, escaped body."""
+    """§S2-6.6: ``/broadcast <text>`` opens the audience step with the text."""
     await add_user(session_factory, 100)
-    await add_user(session_factory, 101)
-    await add_user(session_factory, 102)
-    await add_user(session_factory, 103, UserStatus.BLOCKED)
-    await add_user(session_factory, 104, bot_blocked=True)
 
     await broadcast.broadcast_command(
         message(OWNER, "/broadcast 5 <b> off"), fake_bot, handler_container
     )
 
-    # One summary, sent once, after the loop (B3).
-    assert fake_bot.texts_to(CHAT) == [texts.BROADCAST_SUMMARY.format(sent=3, failed=0)]
-    delivered = [chat for chat, _ in fake_bot.sent if chat != CHAT]
-    assert sorted(delivered) == [100, 101, 102]
-    for chat in (100, 101, 102):
-        (text,) = fake_bot.texts_to(chat)
-        assert text == f"{texts.BROADCAST_HEADER}\n\n5 &lt;b&gt; off"
-
-
-async def test_broadcast_counts_failures_without_stopping(
-    handler_container: Container,
-    fake_bot: FakeBot,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """A failing send is counted, not raised, and the summary still goes out once."""
-    await add_user(session_factory, 100)
-    await add_user(session_factory, 101)
-
-    notifier = handler_container.notifier
-    assert notifier is not None
-    seen: list[int] = []
-
-    async def flaky(chat_id: int, text: str, **kwargs: object) -> bool:
-        seen.append(int(chat_id))
-        return len(seen) != 1  # the first recipient "fails"
-
-    notifier.safe_send = flaky  # type: ignore[method-assign]
-
-    await broadcast.broadcast_command(
-        message(OWNER, "/broadcast hi"), fake_bot, handler_container
-    )
-
-    assert seen == [100, 101]
-    assert fake_bot.texts_to(CHAT) == [texts.BROADCAST_SUMMARY.format(sent=1, failed=1)]
+    sent = [text for chat, text in fake_bot.sent if chat == CHAT]
+    assert sent and "5 &lt;b&gt; off" in sent[-1]
+    markup = fake_bot.messages[-1][2]["reply_markup"]
+    payloads = [b.callback_data for row in markup.keyboard for b in row]
+    assert "adm:broadcast:a:all" in payloads
+    assert await fake_bot.get_state(OWNER, CHAT) == UserStates.admin_broadcast.name
 
 
 async def test_broadcast_holds_no_db_session_while_pacing(
@@ -340,6 +321,8 @@ async def test_broadcast_holds_no_db_session_while_pacing(
     await broadcast.broadcast_command(
         message(OWNER, "/broadcast hi"), fake_bot, handler_container
     )
+    await admin_callback(_cb("adm:broadcast:a:all"), fake_bot, handler_container)
+    await admin_callback(_cb("adm:broadcast:go"), fake_bot, handler_container)
 
     # The recipients were read in exactly one session, closed before the loop...
     assert watcher.peak == 1
@@ -347,7 +330,8 @@ async def test_broadcast_holds_no_db_session_while_pacing(
     # ...so no session (let alone a transaction) is open while sending or sleeping.
     assert sent_during == [0, 0]
     assert slept_during == [0, 0]
-    assert fake_bot.texts_to(CHAT) == [texts.BROADCAST_SUMMARY.format(sent=2, failed=0)]
+    # The summary is a single edit of the live progress message (B3).
+    assert fake_bot.edits[-1][2] == texts.BROADCAST_SUMMARY.format(sent=2, failed=0)
 
 
 async def test_broadcast_without_text_shows_usage(

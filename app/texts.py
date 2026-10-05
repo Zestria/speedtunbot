@@ -194,6 +194,23 @@ BROADCAST_HEADER = "📢 <b>Объявление</b>"
 BROADCAST_SUMMARY = (
     "✅ Рассылка завершена\n\nУспешно: <b>{sent}</b>\nНеудачно: <b>{failed}</b>"
 )
+#: §S2-6.3 — prompt for the announcement text (multi-line, sent as escaped text).
+BROADCAST_PROMPT = (
+    "📢 Отправьте текст рассылки одним сообщением.\n\n"
+    "Разметка не поддерживается — текст уйдёт как есть."
+)
+#: §S2-6.3 — an empty handed-in text cancels the flow.
+BROADCAST_EMPTY = "❌ Пустой текст — рассылка отменена."
+#: §S2-6.4 — preview card: the announcement + recipient count.
+BROADCAST_PREVIEW = (
+    "📢 <b>Предпросмотр рассылки</b>\n\n{body}\n\n👥 Получателей: <b>{count}</b>"
+)
+#: §S2-6.4 — audience step: the announcement plus the audience buttons.
+BROADCAST_AUDIENCE = "📢 <b>Рассылка</b>\n\n{body}\n\nВыберите аудиторию:"
+#: §S2-6.5 — live progress line, edited every ~20 sends.
+BROADCAST_PROGRESS = "📢 {bar} {pct}% · ✅ {sent} · ❌ {failed}"
+#: §S2-6.4 — the audience is empty, so there is nothing to send.
+BROADCAST_NO_RECIPIENTS = "⚠️ В выбранной аудитории нет получателей."
 
 # --- /ban, /unban, /banned_list (M0-09.5) ----------------------------------
 
