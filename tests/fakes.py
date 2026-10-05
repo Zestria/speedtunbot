@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from py3xui import Client
@@ -226,15 +227,22 @@ class FakeBot:
 
     Used by RBAC tests (M0-06) and reusable wherever a handler-level bot double
     is needed; it mirrors just the slice of the telebot surface the handlers and
-    the permission helpers touch.
+    the permission helpers touch. Since M0-09 it also implements the tiny FSM
+    slice the support relay needs (``set_state``/``get_state``/``delete_state``/
+    ``retrieve_data``).
     """
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
         self.callback_answers: list[tuple[str, str | None, bool]] = []
+        #: Same messages as ``sent`` plus the keyword arguments, for HTML tests.
+        self.messages: list[tuple[int, str, dict[str, Any]]] = []
+        self._states: dict[tuple[int, int], str | None] = {}
+        self._data: dict[tuple[int, int], dict[str, Any]] = {}
 
     async def send_message(self, chat_id: int, text: str, **kwargs: object) -> None:
         self.sent.append((int(chat_id), text))
+        self.messages.append((int(chat_id), text, dict(kwargs)))
 
     async def answer_callback_query(
         self,
@@ -244,3 +252,29 @@ class FakeBot:
         **kwargs: object,
     ) -> None:
         self.callback_answers.append((callback_query_id, text, show_alert))
+
+    # --- FSM slice (support relay) -----------------------------------------
+
+    async def set_state(
+        self, user_id: int, state: object, chat_id: int | None = None
+    ) -> None:
+        name = getattr(state, "name", state)
+        self._states[(int(user_id), int(chat_id or 0))] = name
+
+    async def get_state(self, user_id: int, chat_id: int | None = None) -> str | None:
+        return self._states.get((int(user_id), int(chat_id or 0)))
+
+    async def delete_state(self, user_id: int, chat_id: int | None = None) -> None:
+        self._states.pop((int(user_id), int(chat_id or 0)), None)
+
+    @asynccontextmanager
+    async def retrieve_data(
+        self, user_id: int, chat_id: int | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
+        yield self._data.setdefault((int(user_id), int(chat_id or 0)), {})
+
+    # --- assertions helpers -------------------------------------------------
+
+    def texts_to(self, chat_id: int) -> list[str]:
+        """Return every text sent to ``chat_id`` (in order)."""
+        return [text for cid, text, _ in self.messages if cid == int(chat_id)]

@@ -20,6 +20,7 @@ from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
 from app.services.settings_service import SettingsService
 from app.services.subscriptions import SubscriptionService
+from app.services.users import UserService
 from app.settings import Settings
 
 
@@ -44,6 +45,8 @@ class Container:
     settings_service: SettingsService | None = field(default=None)
     # Audit trail (M0-08). Built during startup via :meth:`init_audit`.
     audit: AuditService | None = field(default=None)
+    # User identity/access status (M0-09). Built via :meth:`init_users`.
+    users: UserService | None = field(default=None)
 
     def init_panel(self) -> tuple[PanelGateway, SubscriptionService]:
         """Create the panel gateway + subscription service from settings."""
@@ -79,6 +82,12 @@ class Container:
         audit = AuditService(self.sessionmaker)
         self.audit = audit
         return audit
+
+    def init_users(self) -> UserService:
+        """Create the user/access service (needs the panel + audit, §M0-09)."""
+        users = UserService(self.sessionmaker, panel=self.panel, audit=self.audit)
+        self.users = users
+        return users
 
     @asynccontextmanager
     async def db(self) -> AsyncIterator[AsyncSession]:

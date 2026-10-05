@@ -1,25 +1,6 @@
-import os
-import json
 import time
 
 from config import RATES
-
-
-def load_banned_users(filepath: str) -> set:
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-
-        except Exception:
-            return set()
-
-    return set()
-
-
-def save_banned_users(banned: set, filepath: str) -> None:
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(list(banned), f)
 
 
 def calculate_expiry_time(old_expiry_time: int | None, days: int) -> int:

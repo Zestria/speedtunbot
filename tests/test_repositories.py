@@ -56,6 +56,28 @@ async def test_users_set_status_unknown_returns_none(session: AsyncSession) -> N
     assert await users_repo.set_status(session, 123, UserStatus.APPROVED) is None
 
 
+async def test_users_list_broadcast_ids_filters_and_returns_ints(
+    session: AsyncSession,
+) -> None:
+    """``list_broadcast_ids`` returns bare ints: approved and not bot-blocked."""
+    for tg_id, config in [
+        (1, (UserStatus.APPROVED, False)),
+        (2, (UserStatus.NEW, False)),
+        (3, (UserStatus.APPROVED, True)),
+        (4, (UserStatus.APPROVED, False)),
+    ]:
+        status, bot_blocked = config
+        await users_repo.upsert_from_telegram(session, tg_id)
+        await users_repo.set_status(session, tg_id, status)
+        if bot_blocked:
+            await users_repo.set_bot_blocked(session, tg_id, True)
+    await session.commit()
+
+    ids = await users_repo.list_broadcast_ids(session)
+    assert ids == [1, 4]
+    assert all(type(tg_id) is int for tg_id in ids)
+
+
 async def test_users_list_approved(session: AsyncSession) -> None:
     for tg_id, status in [
         (1, UserStatus.APPROVED),

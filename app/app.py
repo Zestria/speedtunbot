@@ -66,6 +66,7 @@ async def _publish_command_menus(bot: object, owner_ids: list[int]) -> None:
 
     admin_commands = commands + [
         BotCommand("support_user", "✉️ Написать пользователю"),
+        BotCommand("broadcast", "📢 Рассылка"),
         BotCommand("maintenance", "⚙️ Режим обслуживания"),
         BotCommand("ban", "🚫 Забанить"),
         BotCommand("unban", "✅ Разбанить"),
@@ -91,14 +92,17 @@ async def run() -> None:
     container.init_rbac()
     container.init_settings()
     container.init_audit()
+    container.init_panel()
+    container.init_users()
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.
     from telebot.asyncio_filters import StateFilter
 
     from app import permissions
+    from app.handlers import register_all_handlers
     from app.middlewares import build_middlewares
-    from handlers import register_all_handlers
+    from handlers import register_payment_handler
     from loads import bot
 
     # Wire RBAC enforcement details (M0-06) before handlers are registered.
@@ -118,7 +122,9 @@ async def run() -> None:
         secrets=[settings.bot_token, settings.vpn_token],
     )
     bot.setup_middleware(ErrorReporterMiddleware(reporter))
-    register_all_handlers(bot)
+    # Ported handlers (M0-09) + the still-legacy /pay (M0-10 ports it).
+    register_all_handlers(bot, container)
+    register_payment_handler(bot)
 
     me = await bot.get_me()
     container.bot_username = me.username

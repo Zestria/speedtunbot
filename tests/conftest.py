@@ -14,10 +14,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
+from app.container import Container
 from app.db import models  # noqa: F401  (register tables)
 from app.db.base import Base
 from app.db.session import attach_sqlite_pragmas
+from app.permissions import configure
+from app.services.subscriptions import SubscriptionService
 from app.settings import Settings
+from tests.fakes import FakeBot, FakePanel
 
 
 @pytest.fixture
@@ -61,3 +65,38 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
+
+
+@pytest_asyncio.fixture
+async def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """A sessionmaker over the shared in-memory engine (services, handlers)."""
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture
+def fake_bot() -> FakeBot:
+    """Recording bot double shared by the handler and RBAC tests."""
+    return FakeBot()
+
+
+@pytest_asyncio.fixture
+async def handler_container(
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    fake_bot: FakeBot,
+) -> Container:
+    """Container wired like startup, but with ``FakePanel`` + ``FakeBot`` (M0-09).
+
+    ``permissions.configure`` is called with the container's ``AdminService`` so
+    the ``@require`` guard inside the ported handlers can resolve roles.
+    """
+    container = Container(settings=settings, sessionmaker=session_factory)
+    container.init_rbac()
+    container.init_settings()
+    container.init_audit()
+    container.panel = FakePanel()
+    container.subscriptions = SubscriptionService(container.panel)
+    container.init_users()
+    container.notifier.attach_bot(fake_bot)  # type: ignore[union-attr]
+    configure(bot=fake_bot, admins=container.admins)
+    return container

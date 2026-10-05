@@ -107,6 +107,29 @@ async def list_approved(session: AsyncSession) -> list[User]:
     return list(result.scalars().all())
 
 
+async def list_blocked(session: AsyncSession) -> list[User]:
+    """Return every blocked (banned) user, oldest first."""
+    result = await session.execute(
+        select(User).where(User.status == UserStatus.BLOCKED).order_by(User.tg_id)
+    )
+    return list(result.scalars().all())
+
+
+async def list_broadcast_ids(session: AsyncSession) -> list[int]:
+    """Return broadcast recipients: ``approved`` and not blocking the bot (§M0-09.4).
+
+    Only ``tg_id`` is selected and materialised as a plain ``int`` list, so the
+    caller can close the session before iterating: a detached ORM instance would
+    drag a lazy load (and therefore a connection) into the send loop.
+    """
+    result = await session.execute(
+        select(User.tg_id)
+        .where(User.status == UserStatus.APPROVED, User.bot_blocked.is_(False))
+        .order_by(User.tg_id)
+    )
+    return [int(tg_id) for tg_id in result.scalars().all()]
+
+
 async def set_panel_client_uuid(
     session: AsyncSession,
     tg_id: int,

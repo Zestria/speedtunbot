@@ -8,13 +8,10 @@ from config import (
     DOMAIN,
     VPN_TOKEN,
     BOT_TOKEN,
-    BANNED_FILE
 )
-from utils import load_banned_users
 
 api = AsyncApi(DOMAIN, token=VPN_TOKEN)
 bot = AsyncTeleBot(BOT_TOKEN)
 state_storage = StateMemoryStorage()
 busy_users = set()
-banned: set = load_banned_users(BANNED_FILE)
 is_maintenance_lock = asyncio.Lock()
