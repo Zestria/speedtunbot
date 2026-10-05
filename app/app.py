@@ -94,6 +94,7 @@ async def run() -> None:
     container.init_audit()
     container.init_panel()
     container.init_users()
+    container.init_payments()
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.
@@ -101,8 +102,8 @@ async def run() -> None:
 
     from app import permissions
     from app.handlers import register_all_handlers
+    from app.handlers.payment import reconcile_payments
     from app.middlewares import build_middlewares
-    from handlers import register_payment_handler
     from loads import bot
 
     # Wire RBAC enforcement details (M0-06) before handlers are registered.
@@ -122,13 +123,18 @@ async def run() -> None:
         secrets=[settings.bot_token, settings.vpn_token],
     )
     bot.setup_middleware(ErrorReporterMiddleware(reporter))
-    # Ported handlers (M0-09) + the still-legacy /pay (M0-10 ports it).
+    # Ported handlers (M0-09) plus the DB-backed /pay (M0-10).
     register_all_handlers(bot, container)
-    register_payment_handler(bot)
 
     me = await bot.get_me()
     container.bot_username = me.username
     logger.info("Bot is @%s", container.bot_username)
+
+    # §M0-10.10: surface approved-but-unapplied payments to the owners.
+    try:
+        await reconcile_payments(container)
+    except Exception:  # a reconcile hiccup must never block startup
+        logger.warning("payment reconcile failed", exc_info=True)
 
     await _publish_command_menus(bot, settings.owner_ids)
     await run_polling(bot, reporter)

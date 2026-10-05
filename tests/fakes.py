@@ -222,6 +222,13 @@ class FakePanel:
         raise NotSupportedError("panel DB export is not supported by py3xui")
 
 
+class FakeMessage:
+    """Slim stand-in for a telebot ``Message`` returned by ``FakeBot``."""
+
+    def __init__(self, message_id: int) -> None:
+        self.message_id = int(message_id)
+
+
 class FakeBot:
     """Records ``send_message`` / ``answer_callback_query`` calls (no I/O).
 
@@ -237,12 +244,19 @@ class FakeBot:
         self.callback_answers: list[tuple[str, str | None, bool]] = []
         #: Same messages as ``sent`` plus the keyword arguments, for HTML tests.
         self.messages: list[tuple[int, str, dict[str, Any]]] = []
+        #: ``(chat_id, kind, file_id, kwargs)`` for ``send_photo``/``send_document``.
+        self.media: list[tuple[int, str, str, dict[str, Any]]] = []
         self._states: dict[tuple[int, int], str | None] = {}
         self._data: dict[tuple[int, int], dict[str, Any]] = {}
+        self._next_message_id = 1000
 
-    async def send_message(self, chat_id: int, text: str, **kwargs: object) -> None:
+    async def send_message(
+        self, chat_id: int, text: str, **kwargs: object
+    ) -> FakeMessage:
         self.sent.append((int(chat_id), text))
         self.messages.append((int(chat_id), text, dict(kwargs)))
+        self._next_message_id += 1
+        return FakeMessage(self._next_message_id)
 
     async def answer_callback_query(
         self,
@@ -252,6 +266,22 @@ class FakeBot:
         **kwargs: object,
     ) -> None:
         self.callback_answers.append((callback_query_id, text, show_alert))
+
+    # --- media (receipts / support attachments) ----------------------------
+
+    async def send_photo(
+        self, chat_id: int, photo: str, **kwargs: object
+    ) -> FakeMessage:
+        self.media.append((int(chat_id), "photo", str(photo), dict(kwargs)))
+        self._next_message_id += 1
+        return FakeMessage(self._next_message_id)
+
+    async def send_document(
+        self, chat_id: int, document: str, **kwargs: object
+    ) -> FakeMessage:
+        self.media.append((int(chat_id), "document", str(document), dict(kwargs)))
+        self._next_message_id += 1
+        return FakeMessage(self._next_message_id)
 
     # --- FSM slice (support relay) -----------------------------------------
 

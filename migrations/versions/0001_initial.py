@@ -227,7 +227,7 @@ def upgrade() -> None:
             "uq_payments_active_user",
             ["user_tg_id"],
             unique=True,
-            sqlite_where=sa.text("status IN ('created','submitted')"),
+            sqlite_where=sa.text("status IN ('created','awaiting_proof','submitted')"),
         )
 
     # ### end Alembic commands ###
@@ -238,7 +238,7 @@ def downgrade() -> None:
     with op.batch_alter_table("payments", schema=None) as batch_op:
         batch_op.drop_index(
             "uq_payments_active_user",
-            sqlite_where=sa.text("status IN ('created','submitted')"),
+            sqlite_where=sa.text("status IN ('created','awaiting_proof','submitted')"),
         )
 
     op.drop_table("payments")

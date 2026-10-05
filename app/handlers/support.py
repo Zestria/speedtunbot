@@ -61,6 +61,38 @@ async def support_message(message: Any, bot: Any, container: Container) -> None:
     await notifier.send_to(recipients, card, parse_mode="HTML")
 
 
+async def support_media(message: Any, bot: Any, container: Container) -> None:
+    """Forward a photo/document from a user in the help state to staff.
+
+    The media counterpart of :func:`support_message`: staff holding
+    ``support.reply`` receive the file itself (best effort). Used by the
+    payment media router when a user has no pending payment to attach it to.
+    """
+    recipients = await staff_with(Permission.SUPPORT_REPLY, "notify_support")
+    if not recipients:
+        logger.info("support media from %s delivered to nobody", message.from_user.id)
+        return
+    caption = texts.SUPPORT_CARD.format(
+        who=_who(message), text=esc(getattr(message, "caption", None) or "")
+    )
+    document = getattr(message, "document", None)
+    photo = getattr(message, "photo", None)
+    for chat_id in recipients:
+        try:
+            if document is not None:
+                await bot.send_document(
+                    int(chat_id), str(document.file_id), caption=caption
+                )
+            elif photo:
+                await bot.send_photo(
+                    int(chat_id), str(photo[-1].file_id), caption=caption
+                )
+        except Exception:  # pragma: no cover - best-effort fan-out
+            logger.warning(
+                "failed to forward support media to %s", chat_id, exc_info=True
+            )
+
+
 @require(Permission.SUPPORT_REPLY)
 async def support_user_command(message: Any, bot: Any, container: Container) -> None:
     """Put staff into the "writing to a user" state (``/support_user <tg_id>``)."""
@@ -136,6 +168,7 @@ def register_support_handler(bot: Any, container: Container) -> None:
 __all__ = [
     "register_support_handler",
     "support_command",
+    "support_media",
     "support_message",
     "support_relay",
     "support_user_command",

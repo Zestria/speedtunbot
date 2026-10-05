@@ -18,6 +18,7 @@ from app.services.admins import AdminService
 from app.services.audit import AuditService
 from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
+from app.services.payments import PaymentService
 from app.services.settings_service import SettingsService
 from app.services.subscriptions import SubscriptionService
 from app.services.users import UserService
@@ -47,6 +48,8 @@ class Container:
     audit: AuditService | None = field(default=None)
     # User identity/access status (M0-09). Built via :meth:`init_users`.
     users: UserService | None = field(default=None)
+    # DB-backed payments (M0-10). Built via :meth:`init_payments`.
+    payments: PaymentService | None = field(default=None)
 
     def init_panel(self) -> tuple[PanelGateway, SubscriptionService]:
         """Create the panel gateway + subscription service from settings."""
@@ -88,6 +91,19 @@ class Container:
         users = UserService(self.sessionmaker, panel=self.panel, audit=self.audit)
         self.users = users
         return users
+
+    def init_payments(self) -> PaymentService:
+        """Create the payment service (needs panel/subscriptions/notifier, §M0-10)."""
+        payments = PaymentService(
+            self.sessionmaker,
+            panel=self.panel,
+            subscriptions=self.subscriptions,
+            notifier=self.notifier,
+            timezone=self.settings.timezone,
+            audit=self.audit,
+        )
+        self.payments = payments
+        return payments
 
     @asynccontextmanager
     async def db(self) -> AsyncIterator[AsyncSession]:

@@ -125,3 +125,95 @@ PANEL_ALERT = "⚠️ Ошибка панели в {context}: {error}"
 
 MAINTENANCE_ON = "Режим техобслуживания 🔴 <b>включён</b>"
 MAINTENANCE_OFF = "Режим техобслуживания 🟢 <b>выключен</b>"
+
+# --- /pay (M0-10) ----------------------------------------------------------
+
+PAYMENT_NO_ACCOUNT = "⚠️ У вас ещё нет аккаунта.\n\nПерейдите в /start для регистрации."
+PAYMENT_NO_CLIENT = (
+    "⚠️ Ваш аккаунт ещё не подключён к серверу.\n\n"
+    "Запустите /start, чтобы создать подключение."
+)
+PAYMENT_NOT_APPROVED = "⚠️ Ваш аккаунт ещё не подтверждён. Обратитесь в /support."
+PAYMENT_NO_TARIFFS = "⚠️ Тарифы временно недоступны. Попробуйте позже."
+PAYMENT_CHOOSE_TARIFF = "💳 <b>Выберите тариф</b>"
+PAYMENT_TARIFF_BUTTON = "{days} дней — {price} ₽"
+PAYMENT_INSTRUCTIONS = (
+    "💳 <b>Оплата тарифа</b>\n\n"
+    "Тариф: <b>{name}</b>\n"
+    "Сумма к оплате: <b>{price} ₽</b>\n\n"
+    "Переведите средства на счёт:\n"
+    "<code>{bank_details}</code>\n\n"
+    "После оплаты нажмите ✅ Готово.\n"
+    "Если передумали — ❌ Отмена."
+)
+PAYMENT_NO_BANK_DETAILS = "⚠️ Реквизиты для оплаты не настроены. Обратитесь в /support."
+PAYMENT_ALREADY_SUBMITTED = (
+    "⏳ Ваша заявка на рассмотрении.\n\nПожалуйста, дождитесь подтверждения."
+)
+PAYMENT_AWAITING_PROOF = (
+    "✅ Заявка отправлена на проверку.\n\n"
+    "Если хотите, пришлите фото или файл чека — он попадёт к администратору.\n\n"
+    "Отменить заявку можно кнопкой ниже."
+)
+PAYMENT_RECEIPT_SAVED = "🧾 Чек прикреплён к заявке #{id}. Спасибо!"
+PAYMENT_MEDIA_UNROUTED = (
+    "❓ Не понял вложение.\n\n"
+    "Чек можно приложить после /pay, а вопросы задать через /support."
+)
+PAYMENT_USER_EXPIRED = (
+    "⌛ Ваша заявка была отменена автоматически: истёк срок рассмотрения.\n\n"
+    "Начать заново: /pay"
+)
+PAYMENT_CANCELLED_BY_USER = "❌ Оформление подписки отменено.\n\nНачать заново: /pay"
+PAYMENT_NOT_FOUND = "❌ Заявка не найдена. Начните заново /pay"
+PAYMENT_UNKNOWN_TARIFF = "❌ Тариф не найден. Начните заново /pay"
+PAYMENT_ALREADY_PROCESSED = "⏳ Заявка уже обработана."
+PAYMENT_UNAVAILABLE = "⚠️ Сервис временно недоступен. Попробуйте позже."
+PAYMENT_APPROVED_BY_ADMIN = "✅ Заявка одобрена."
+PAYMENT_DECLINED_BY_ADMIN = "❌ Заявка отклонена."
+PAYMENT_RETRY_OK = "✅ Применение повторено."
+PAYMENT_RETRY_NOOP = "ℹ️ Заявка уже применена."
+
+#: Review card fanned out to ``payments.review`` staff (§M0-10.3).
+PAYMENT_CARD = (
+    "📥 <b>Новая заявка на оплату</b> #{id}\n\n"
+    "Пользователь: {who}\n"
+    "ID: <code>{tg_id}</code>\n"
+    "Тариф: <b>{name}</b>\n"
+    "Цена: <b>{price} ₽</b>\n"
+    "Срок: {days} дн.\n"
+    "Текущий срок действия: {expiry}"
+)
+PAYMENT_CARD_UNLIMITED_WARNING = (
+    "⚠️ У клиента бессрочная подписка — срок действия изменён не будет."
+)
+PAYMENT_CARD_APPROVED = "✅ Одобрено {actor}\n\nДобавлено {days} дн."
+PAYMENT_CARD_APPLY_FAILED = (
+    "⚠️ Одобрено {actor}, но панель не ответила.\nНажмите «Повторить применение»."
+)
+PAYMENT_CARD_DECLINED = "❌ Отклонено {actor}"
+PAYMENT_CARD_CANCELLED = "🚫 Заявка отменена пользователем"
+PAYMENT_CARD_EXPIRED = "⌛ Заявка истекла (не рассмотрена вовремя)"
+PAYMENT_RECEIPT_CARD = "🧾 Чек к заявке #{id}"
+PAYMENT_CARD_SYSTEM = "системой"
+PAYMENT_NO_USERNAME = "нет @username"
+PAYMENT_EXPIRY_UNLIMITED = "бессрочно"
+PAYMENT_USER_APPROVED = (
+    "✅ <b>Подписка активирована!</b>\n\n"
+    "Тариф: <b>{name}</b>\n"
+    "Добавлено: {days} дн.\n"
+    "Проверить статус: /profile"
+)
+PAYMENT_USER_DECLINED = "❌ Ваша заявка была отклонена.\n\nПо вопросам: /support"
+PAYMENT_RETRY_ALERT = (
+    "⚠️ Платёж #{id} одобрен, но не применён к панели.\n"
+    "Пользователь: <code>{tg_id}</code>, тариф: <b>{name}</b>"
+)
+
+# --- payment buttons --------------------------------------------------------
+
+BUTTON_PAY_DONE = "✅ Готово"
+BUTTON_PAY_CANCEL = "❌ Отмена"
+BUTTON_APPROVE = "✅ Одобрить"
+BUTTON_DECLINE = "❌ Отклонить"
+BUTTON_RETRY_APPLY = "🔁 Повторить применение"

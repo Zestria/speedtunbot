@@ -55,10 +55,15 @@ class GrantRequestStatus(StrEnum):
 
 class PaymentStatus(StrEnum):
     CREATED = "created"
+    #: User pressed "Готово": waiting for review, may still attach a receipt.
+    AWAITING_PROOF = "awaiting_proof"
+    #: A receipt arrived (or the user skipped it) — fully submitted for review.
     SUBMITTED = "submitted"
     APPROVED = "approved"
     DECLINED = "declined"
     CANCELLED = "cancelled"
+    #: Unreviewed for too long — auto-closed so the user is not soft-locked.
+    EXPIRED = "expired"
     REVOKED = "revoked"
 
 
@@ -196,12 +201,12 @@ class Tariff(Base):
 class Payment(Base):
     __tablename__ = "payments"
     __table_args__ = (
-        # At most one *active* payment per user (status created/submitted).
+        # At most one *active* payment per user (created/awaiting_proof/submitted).
         Index(
             "uq_payments_active_user",
             "user_tg_id",
             unique=True,
-            sqlite_where=sa_text("status IN ('created','submitted')"),
+            sqlite_where=sa_text("status IN ('created','awaiting_proof','submitted')"),
         ),
     )
 

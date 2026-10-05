@@ -8,7 +8,6 @@ extend-exclude = [
     "loads.py",
     "middlewares.py",
     "utils.py",
-    "handlers/",
 ]
 
 [tool.ruff.lint]
@@ -27,7 +26,7 @@ plugins = ["pydantic.mypy"]
 # Legacy modules are ported/removed in later M0 tasks; do not gate M0-01 on
 # type errors that belong to unfinished code.
 [[tool.mypy.overrides]]
-module = ["config", "loads", "middlewares", "utils", "handlers.*"]
+module = ["config", "loads", "middlewares", "utils"]
 ignore_errors = true
 
 [tool.pytest.ini_options]
