@@ -290,6 +290,12 @@ class FakeBot:
         #: ``file`` is the object the handler passed (a ``str`` file id **or** a
         #: ``BytesIO``), so tests can assert on in-memory uploads too.
         self.media: list[tuple[int, str, Any, dict[str, Any]]] = []
+        #: ``(chat_id, [(command, description)])`` for every ``set_my_commands``
+        #: call; ``chat_id`` is ``None`` for the default scope (§S4-1).
+        self.command_menus: list[tuple[int | None, list[tuple[str, str]]]] = []
+        #: Chats whose per-chat menu publish raises, like a chat the bot never
+        #: talked to (``400 chat not found``) — §S4-1.
+        self.fail_commands_for: set[int] = set()
         #: Raise ``RuntimeError`` on every edit (exercises the send fallback).
         self.fail_edit = False
         self._edited: dict[tuple[int, int], str] = {}
@@ -374,7 +380,27 @@ class FakeBot:
     ) -> AsyncIterator[dict[str, Any]]:
         yield self._data.setdefault((int(user_id), int(chat_id or 0)), {})
 
+    # --- command menus (§S4-1) ---------------------------------------------
+
+    async def set_my_commands(
+        self, commands: Any, scope: Any = None, **kwargs: object
+    ) -> None:
+        """Record a published command menu, keyed by the scope's chat (or ``None``)."""
+        chat_id = getattr(scope, "chat_id", None)
+        if chat_id in self.fail_commands_for:
+            raise RuntimeError("Bad Request: chat not found")
+        self.command_menus.append(
+            (chat_id, [(button.command, button.description) for button in commands])
+        )
+
     # --- assertions helpers -------------------------------------------------
+
+    def commands_to(self, chat_id: int | None) -> list[tuple[str, str]] | None:
+        """Return the last menu published to ``chat_id`` (``None`` = default scope)."""
+        for cid, menu in reversed(self.command_menus):
+            if cid == chat_id:
+                return menu
+        return None
 
     def texts_to(self, chat_id: int) -> list[str]:
         """Return every text sent to ``chat_id`` (in order)."""

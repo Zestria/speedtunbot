@@ -12,6 +12,7 @@ import asyncio
 import logging
 
 from app import texts
+from app.commands import setup_bot_commands
 from app.container import Container
 from app.db.migrate import upgrade_head
 from app.db.seeds import seed_all
@@ -50,35 +51,6 @@ def _warn_if_local_sub_url(settings: Settings) -> None:
             "SUB_URL_BASE points at a local host (%s); subscription links will "
             "only work on this machine.",
             settings.sub_url_base,
-        )
-
-
-async def _publish_command_menus(bot: object, owner_ids: list[int]) -> None:
-    """Publish the legacy command menus (ported to per-role menus in M1-07)."""
-    from telebot.types import BotCommand, BotCommandScopeChat
-
-    await bot.delete_my_commands()  # type: ignore[attr-defined]
-
-    commands = [
-        BotCommand("start", "🚀 Запустить бота"),
-        BotCommand("profile", "👤 Мой профиль"),
-        BotCommand("pay", "💳 Оплата"),
-        BotCommand("support", "💬 Поддержка"),
-    ]
-    await bot.set_my_commands(commands)  # type: ignore[attr-defined]
-
-    admin_commands = commands + [
-        BotCommand("support_user", "✉️ Написать пользователю"),
-        BotCommand("broadcast", "📢 Рассылка"),
-        BotCommand("maintenance", "⚙️ Режим обслуживания"),
-        BotCommand("ban", "🚫 Забанить"),
-        BotCommand("unban", "✅ Разбанить"),
-        BotCommand("banned_list", "📋 Список забаненных"),
-    ]
-    for owner_id in owner_ids:
-        await bot.set_my_commands(  # type: ignore[attr-defined]
-            commands=admin_commands,
-            scope=BotCommandScopeChat(owner_id),
         )
 
 
@@ -184,7 +156,7 @@ async def run() -> None:
     except Exception:  # a reconcile hiccup must never block startup
         logger.warning("payment reconcile failed", exc_info=True)
 
-    await _publish_command_menus(bot, settings.owner_ids)
+    await setup_bot_commands(bot, container)
     await run_polling(bot, reporter)
 
 
