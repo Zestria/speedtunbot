@@ -58,7 +58,7 @@ def test_pack_rejects_multibyte_overflow() -> None:
     ("payload", "data"),
     [
         (Pay(action="sel", ref_id=7), "pay:sel:7"),
-        (Access(action="ok", ref_id=12), "acc:ok:12"),
+        (Access(action="accept", ref_id=12), "acc:accept:12"),
         (AdminGrant(action="no", ref_id=3), "adg:no:3"),
         (UserAction(action="ban", ref_id=99), "usr:ban:99"),
         (Support(action="reply", ref_id=5), "sup:reply:5"),
@@ -129,6 +129,31 @@ def test_confirm_token_payload_stays_within_budget() -> None:
         assert len(payload.pack().encode("utf-8")) <= MAX_BYTES
 
 
+# --- access review actions (S3-2.1) ----------------------------------------
+
+
+@pytest.mark.parametrize("action", sorted(Access.ACTIONS))
+def test_access_action_round_trips_within_budget(action: str) -> None:
+    """AC (S3-2.1): every ``acc:`` action round-trips inside the byte budget."""
+    payload = Access(action=action, ref_id=123456789)
+
+    assert payload.pack() == f"acc:{action}:123456789"
+    assert unpack(payload.pack()) == payload
+    assert len(payload.pack().encode("utf-8")) <= MAX_BYTES
+
+
+def test_access_actions_match_the_service_decisions() -> None:
+    """The callback vocabulary and the service's decisions must not drift.
+
+    ``access_callback`` passes ``payload.action`` straight into
+    ``UserService.decide_access``, so a renamed action on either side would
+    silently reject every review.
+    """
+    from app.services.users import DECISION_STATUS
+
+    assert frozenset(DECISION_STATUS) == Access.ACTIONS
+
+
 # --- malformed / edited data raises InvalidCallback (fixes B5) -------------
 
 
@@ -143,6 +168,11 @@ def test_confirm_token_payload_stays_within_budget() -> None:
         "pay:sel:1:2",  # too many segments
         "pay:sel:abc",  # id is not an int
         "pay:nope:1",  # unknown action
+        "acc",  # access: too few segments
+        "acc:accept",  # access: missing tg_id
+        "acc:accept:1:2",  # access: too many segments
+        "acc:nope:1",  # access: unknown action
+        "acc:accept:abc",  # access: tg_id is not an int
         "adm",  # menu: missing section
         "adm:users:a:b:c",  # admin: too many segments
         "adm:nope",  # unknown section

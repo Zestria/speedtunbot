@@ -40,6 +40,9 @@ SCREENS: dict[str, Screen] = {}
 SECTION_PERMISSIONS: dict[str, Permission] = {
     "users": Permission.USERS_VIEW,
     "payments": Permission.PAYMENTS_VIEW,
+    # Pending access requests are a review queue: seeing one *is* reviewing it, so
+    # the section gate is ``access.review`` (the card buttons re-check it anyway).
+    "access": Permission.ACCESS_REVIEW,
     "server": Permission.SERVER_VIEW,
     "broadcast": Permission.BROADCAST_SEND,
     "settings": Permission.SETTINGS_EDIT,

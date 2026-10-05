@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import utcnow
@@ -97,6 +97,46 @@ async def set_status(
     user.status_changed_by = changed_by
     await session.flush()
     return user
+
+
+async def claim_pending(
+    session: AsyncSession,
+    tg_id: int,
+    status: UserStatus,
+    *,
+    changed_by: int | None = None,
+    note: str | None = None,
+) -> bool:
+    """Atomically move a ``pending`` row to ``status`` (§S3-2.2).
+
+    Returns ``True`` only for the caller whose ``UPDATE`` matched a row. Two
+    admins clicking «Принять» at the same moment both issue this statement, but
+    the database serialises the writes, so exactly one sees ``rowcount == 1``:
+    the claim *is* the race guard, no read-then-write window exists.
+
+    A row that is already ``approved``/``rejected``/``blocked`` matches nothing
+    and the caller is told it lost (``False``).
+    """
+    result = await session.execute(
+        update(User)
+        .where(User.tg_id == int(tg_id), User.status == UserStatus.PENDING)
+        .values(
+            status=str(status),
+            status_note=note,
+            status_changed_at=utcnow(),
+            status_changed_by=changed_by,
+        )
+    )
+    await session.flush()
+    return int(getattr(result, "rowcount", 0)) == 1
+
+
+async def list_pending(session: AsyncSession) -> list[User]:
+    """Return every ``pending`` access request, oldest first (§S3-2.7)."""
+    result = await session.execute(
+        select(User).where(User.status == UserStatus.PENDING).order_by(User.tg_id)
+    )
+    return list(result.scalars().all())
 
 
 async def list_approved(session: AsyncSession) -> list[User]:

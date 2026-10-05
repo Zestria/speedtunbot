@@ -95,18 +95,23 @@ def render_dashboard(
     )
 
 
-def dashboard_keyboard(role: Role | None) -> Any:
+def dashboard_keyboard(role: Role | None, *, pending: int = 0) -> Any:
     """Build the menu, keeping only the screens the viewer may use (§S2-1.7).
 
     A section is shown only when both its permission matches *and* its screen is
     registered (:data:`app.handlers.admin.nav.SCREENS`), so the dashboard never
-    offers a dead button while later tasks are still landing.
+    offers a dead button while later tasks are still landing. ``pending`` is the
+    live request count rendered into the «⏳ Заявки (N)» label (§S3-2.8).
     """
     buttons: dict[str, dict[str, str]] = {}
     if role_has(role, Permission.USERS_VIEW) and "users" in SCREENS:
         buttons["👥 Пользователи"] = {"callback_data": AdminNav("users").pack()}
     if role_has(role, Permission.PAYMENTS_VIEW) and "payments" in SCREENS:
         buttons["💳 Платежи"] = {"callback_data": AdminNav("payments").pack()}
+    if role_has(role, Permission.ACCESS_REVIEW) and "access" in SCREENS:
+        buttons[f"⏳ Заявки ({int(pending)})"] = {
+            "callback_data": AdminNav("access").pack()
+        }
     if role_has(role, Permission.SERVER_VIEW) and "server" in SCREENS:
         buttons["🖥 Сервер"] = {"callback_data": AdminNav("server").pack()}
     if role_has(role, Permission.BROADCAST_SEND) and "broadcast" in SCREENS:
@@ -154,7 +159,13 @@ async def show_dashboard(
     text = render_dashboard(
         counts, server_ok=server_ok, online=online, maintenance=maintenance
     )
-    await edit_or_send(bot, chat_id, message_id, text, markup=dashboard_keyboard(role))
+    await edit_or_send(
+        bot,
+        chat_id,
+        message_id,
+        text,
+        markup=dashboard_keyboard(role, pending=counts.get("pending", 0)),
+    )
 
 
 @require(Permission.USERS_VIEW)

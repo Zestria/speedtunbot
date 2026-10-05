@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from telebot.asyncio_handler_backends import CancelUpdate
 
+from app import texts
 from app.container import Container
 from app.db.models import Admin, User, UserStatus
 from app.db.repositories import settings as settings_repo
@@ -31,7 +32,7 @@ from app.middlewares import (
     ThrottleMiddleware,
     build_middlewares,
 )
-from app.middlewares.base import chat_id, is_callback, user_id
+from app.middlewares.base import chat_id, is_callback, is_start_command, user_id
 from app.middlewares.throttle import IN_FLIGHT_TTL, RATE_LIMIT
 from app.permissions import Role
 from app.services import settings_service as settings_service_module
@@ -70,6 +71,15 @@ def _callback(tg_id: int, *, data: str = "pay:sel:1", cid: str = "cb1") -> objec
         data=data,
         from_user=SimpleNamespace(id=tg_id, username="neo", first_name="Neo"),
         message=SimpleNamespace(chat=SimpleNamespace(id=99)),
+    )
+
+
+def _start(tg_id: int, *, text: str = "/start", chat: int = 99) -> object:
+    """A ``/start`` message (optionally with a deep-link payload)."""
+    return SimpleNamespace(
+        from_user=SimpleNamespace(id=tg_id, username="neo", first_name="Neo"),
+        chat=SimpleNamespace(id=chat),
+        text=text,
     )
 
 
@@ -285,21 +295,96 @@ async def test_maintenance_staff_bypass(container: Container) -> None:
     assert await middleware.pre_process(_message(OWNER), {"role": Role.OWNER}) is None
 
 
-# --- access middleware -----------------------------------------------------
+# --- access middleware (§S3-1) ---------------------------------------------
 
 
-async def test_access_drops_blocked_user() -> None:
+async def test_access_passes_staff_approved_and_any_start() -> None:
+    """AC: staff/approved pass; **any** ``/start`` passes for every status."""
     middleware = AccessMiddleware()
 
-    blocked = SimpleNamespace(status=UserStatus.BLOCKED)
+    # Staff (role set) pass regardless of the user row.
+    assert (
+        await middleware.pre_process(
+            _message(STRANGER), {"role": Role.OWNER, "user": None}
+        )
+        is None
+    )
+    # An approved user passes a normal update.
     approved = SimpleNamespace(status=UserStatus.APPROVED)
+    assert await middleware.pre_process(_message(STRANGER), {"user": approved}) is None
+
+    # Any /start passes: it may carry an invite to redeem (§S3-3).
+    for status in (
+        UserStatus.PENDING,
+        UserStatus.REJECTED,
+        UserStatus.APPROVED,
+        None,
+    ):
+        user = None if status is None else SimpleNamespace(status=status)
+        assert await middleware.pre_process(_start(STRANGER), {"user": user}) is None
+
+
+async def test_access_drops_stranger_without_start() -> None:
+    """AC: an unknown user only reaches a handler via ``/start``."""
+    middleware = AccessMiddleware()
+
+    assert await middleware.pre_process(_start(STRANGER), {"user": None}) is None
+    assert isinstance(
+        await middleware.pre_process(_message(STRANGER), {"user": None}), CancelUpdate
+    )
+    assert isinstance(
+        await middleware.pre_process(_callback(STRANGER), {"user": None}), CancelUpdate
+    )
+
+
+async def test_access_drops_blocked_silently() -> None:
+    """AC: a blocked user is dropped with no notice, for any update type."""
+    bot = FakeBot()
+    middleware = AccessMiddleware(bot=bot)
+    blocked = SimpleNamespace(status=UserStatus.BLOCKED)
 
     assert isinstance(
         await middleware.pre_process(_message(STRANGER), {"user": blocked}),
         CancelUpdate,
     )
-    assert await middleware.pre_process(_message(STRANGER), {"user": approved}) is None
-    assert await middleware.pre_process(_message(STRANGER), {"user": None}) is None
+    assert isinstance(
+        await middleware.pre_process(_start(STRANGER), {"user": blocked}), CancelUpdate
+    )
+    assert bot.messages == []
+
+
+async def test_access_pending_and_rejected_are_rate_limited() -> None:
+    """AC: pending/rejected users get one notice per interval, then silence."""
+    bot = FakeBot()
+    middleware = AccessMiddleware(bot=bot)
+
+    pending = {"user": SimpleNamespace(status=UserStatus.PENDING)}
+    assert isinstance(
+        await middleware.pre_process(_message(STRANGER), pending), CancelUpdate
+    )
+    assert bot.texts_to(STRANGER) == [texts.ACCESS_PENDING]
+    # A second update inside the window: still cancelled, but no new notice.
+    assert isinstance(
+        await middleware.pre_process(_message(STRANGER), pending), CancelUpdate
+    )
+    assert bot.texts_to(STRANGER) == [texts.ACCESS_PENDING]
+
+    rejected = {"user": SimpleNamespace(status=UserStatus.REJECTED)}
+    assert isinstance(
+        await middleware.pre_process(_callback(STRANGER), rejected), CancelUpdate
+    )
+    assert bot.texts_to(STRANGER) == [texts.ACCESS_PENDING, texts.ACCESS_REJECTED]
+
+
+def test_is_start_command() -> None:
+    """AC: only a ``/start`` message (payload/``@bot`` allowed) matches."""
+    assert is_start_command(_start(STRANGER)) is True
+    assert is_start_command(_start(STRANGER, text="/start inv_abc")) is True
+    assert is_start_command(_start(STRANGER, text="/start@mybot")) is True
+    assert is_start_command(_message(STRANGER)) is False  # no text
+    assert is_start_command(_callback(STRANGER)) is False
+    assert is_start_command(SimpleNamespace(text="/help")) is False
+    assert is_start_command(SimpleNamespace(text="")) is False
 
 
 # --- registration order / helpers ------------------------------------------

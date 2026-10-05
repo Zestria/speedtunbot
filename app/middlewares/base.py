@@ -29,3 +29,18 @@ def is_callback(update: Any) -> bool:
     return getattr(update, "data", None) is not None and (
         getattr(update, "id", None) is not None
     )
+
+
+def is_start_command(update: Any) -> bool:
+    """Return ``True`` when the update is a ``/start`` message (§S3-1).
+
+    The access gate lets *any* ``/start`` through — the command is also the
+    redemption entry point for an ``inv_…`` deep-link payload (§S3-3), so a
+    ``pending``/``rejected``/unknown user must reach ``start_command``. A
+    ``/start@botname`` form and an attached payload are both accepted.
+    """
+    text = getattr(update, "text", None) or getattr(update, "caption", None)
+    if not isinstance(text, str) or not text.strip():
+        return False
+    first = text.strip().split()[0]
+    return first.split("@", 1)[0] == "/start"

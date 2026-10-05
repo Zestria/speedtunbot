@@ -124,36 +124,47 @@ async def audit_rows(
 
 
 def test_render_settings_shows_state_and_bank() -> None:
-    """AC: the card reflects ``maintenance_mode()`` and the stored details."""
-    off = screen.render_settings(maintenance=False, bank=None)
+    """AC: the card reflects ``maintenance_mode()``, access mode and details."""
+    off = screen.render_settings(maintenance=False, bank=None, access="approval")
 
     assert "⚙️ <b>Настройки</b>" in off
     assert "🔧 Тех. работы: 🟢 выкл" in off
+    assert "🔐 Доступ: по заявке" in off
     assert f"🏦 Реквизиты: {screen.BANK_NOT_SET}" in off
 
-    on = screen.render_settings(maintenance=True, bank="Сбер 1234 5678")
+    on = screen.render_settings(
+        maintenance=True, bank="Сбер 1234 5678", access="invite_only"
+    )
     assert "🔧 Тех. работы: 🔴 вкл" in on
+    assert "🔐 Доступ: по приглашению" in on
     assert "🏦 Реквизиты: <code>Сбер 1234 5678</code>" in on
 
 
 def test_settings_keyboard_buttons_parse() -> None:
-    """AC: the toggle/bank/back buttons pack into valid ``AdminNav`` payloads."""
-    markup = screen.settings_keyboard(maintenance=False)
+    """AC: the toggle/access/bank/back buttons pack into valid payloads."""
+    markup = screen.settings_keyboard(maintenance=False, access="approval")
 
     assert labels_of(markup) == [
         "🔧 Тех. работы: 🟢 выкл",
+        "🔐 Доступ: по заявке",
         "🏦 Реквизиты",
         texts.BUTTON_BACK,
     ]
     payloads = payloads_of(markup)
-    assert payloads == ["adm:settings:mt", "adm:settings:bank", "adm:menu"]
+    assert payloads == [
+        "adm:settings:mt",
+        "adm:settings:access",
+        "adm:settings:bank",
+        "adm:menu",
+    ]
     assert [unpack(data) for data in payloads] == [
         AdminNav("settings", screen.OP_TOGGLE),
+        AdminNav("settings", screen.OP_ACCESS),
         AdminNav("settings", screen.OP_BANK),
         AdminNav("menu"),
     ]
 
-    assert labels_of(screen.settings_keyboard(maintenance=True))[0] == (
+    assert labels_of(screen.settings_keyboard(maintenance=True, access="open"))[0] == (
         "🔧 Тех. работы: 🔴 вкл"
     )
 
@@ -174,7 +185,13 @@ async def test_settings_screen_renders_the_current_state(
     markup = fake_bot.edits[-1][3]["reply_markup"]
     assert "⚙️ <b>Настройки</b>" in text
     assert "🔧 Тех. работы: 🟢 выкл" in text
-    assert payloads_of(markup) == ["adm:settings:mt", "adm:settings:bank", "adm:menu"]
+    assert "🔐 Доступ: по заявке" in text
+    assert payloads_of(markup) == [
+        "adm:settings:mt",
+        "adm:settings:access",
+        "adm:settings:bank",
+        "adm:menu",
+    ]
 
     await settings.set_maintenance_mode(True)
     await admin_callback(callback("adm:settings"), fake_bot, handler_container)
@@ -335,6 +352,41 @@ async def test_toggle_flips_maintenance_and_audits_old_to_new(
     rows = await audit_rows(session_factory)
     assert rows[-1].details == {"old": True, "new": False}
     assert screen.MAINTENANCE_TOAST_OFF in [t for _, t, _ in fake_bot.callback_answers]
+
+
+async def test_access_toggle_cycles_the_mode_and_audits(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (§S3-1): the button cycles approval → invite_only → open and audits."""
+    settings = handler_container.settings_service
+    assert settings is not None
+    assert await settings.access_mode() == "approval"
+
+    await admin_callback(callback("adm:settings:access"), fake_bot, handler_container)
+
+    assert await settings.access_mode() == "invite_only"
+    assert "🔐 Доступ: по приглашению" in fake_bot.edits[-1][2]
+    assert screen.ACCESS_TOAST.format(mode="по приглашению") in [
+        t for _, t, _ in fake_bot.callback_answers
+    ]
+
+    await admin_callback(callback("adm:settings:access"), fake_bot, handler_container)
+    assert await settings.access_mode() == "open"
+    assert "🔐 Доступ: открытый" in fake_bot.edits[-1][2]
+
+    await admin_callback(callback("adm:settings:access"), fake_bot, handler_container)
+    assert await settings.access_mode() == "approval"
+
+    rows = await audit_rows(session_factory)
+    assert [(row.action, row.target_id) for row in rows] == [
+        ("setting.set", "access_mode"),
+        ("setting.set", "access_mode"),
+        ("setting.set", "access_mode"),
+    ]
+    assert rows[0].details == {"old": "approval", "new": "invite_only"}
+    assert rows[-1].details == {"old": "open", "new": "approval"}
 
 
 async def test_toggle_silences_the_next_non_staff_update(

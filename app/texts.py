@@ -24,6 +24,51 @@ ERROR_WAIT = "⏳ Подождите…"
 ERROR_MAINTENANCE = "🛠 Идут технические работы. Попробуйте позже."
 ERROR_UNKNOWN_USER = "❓ Пользователь не найден."
 
+# --- access gate (S3-1) ----------------------------------------------------
+
+#: Shown (rate-limited) to a user whose request is still awaiting review.
+ACCESS_PENDING = "⏳ Ваша заявка на рассмотрении."
+#: Shown (rate-limited, 1/hour) to a user whose request was declined.
+ACCESS_REJECTED = "⛔ Заявка отклонена."
+#: Shown under ``invite_only`` when ``/start`` carries no valid invite.
+ACCESS_INVITE_ONLY = (
+    "🔒 Доступ только по приглашению.\n\n"
+    "Обратитесь к администратору за ссылкой-приглашением."
+)
+
+# --- access request card (S3-2) --------------------------------------------
+
+#: Review card fanned out to ``access.review`` staff (§S3-2.4). ``who``/``name``
+#: are pre-escaped by the renderer; ``tg_id`` is a plain int.
+ACCESS_CARD = (
+    "🆕 <b>Новая заявка на доступ</b>\n\n"
+    "ID: <code>{tg_id}</code>\n"
+    "Пользователь: {who}\n"
+    "Имя: {name}\n"
+    "Время: {time}"
+)
+#: Appended to the card once a decision lands, so every stored copy shows it.
+ACCESS_CARD_ACCEPTED = "✅ Принято {actor}"
+ACCESS_CARD_REJECTED = "❌ Отклонено {actor}"
+ACCESS_CARD_BLOCKED = "🚫 Отклонено и заблокировано {actor}"
+#: Toast for the admin who lost the race (the request is already handled).
+ACCESS_ALREADY = "⏳ Заявка уже обработана."
+#: Toast when the panel refused to build the client during an accept.
+ACCESS_PANEL_ERROR = "⚠️ Сервис недоступен, попробуйте позже."
+ACCESS_NO_USERNAME = "нет @username"
+#: Shown when a request carries no ``first_name`` (the card always has a line).
+ACCESS_NO_NAME = "—"
+#: Review-card action labels (§S3-2.4) — also the toast after each click.
+BUTTON_ACCESS_ACCEPT = "✅ Принять"
+BUTTON_ACCESS_REJECT = "❌ Отклонить"
+BUTTON_ACCESS_BLOCK = "🚫 Отклонить и заблокировать"
+#: Direct messages to the requesting user once the decision lands.
+ACCESS_USER_ACCEPTED = (
+    "✅ <b>Доступ открыт!</b>\n\nЗаявка одобрена — можно пользоваться ботом."
+)
+ACCESS_USER_REJECTED = ACCESS_REJECTED + "\n\nПо вопросам: /support"
+ACCESS_USER_BLOCKED = "⛔ Доступ закрыт."
+
 # --- welcome / profile -----------------------------------------------------
 
 WELCOME = (

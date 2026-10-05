@@ -91,6 +91,6 @@ async def test_users_service_is_wired_to_the_panel(
     users = handler_container.users
     assert users is not None
 
-    await users.register(4242, username="neo")
+    await users.approve(4242, username="neo")
 
     assert await handler_container.panel.get_client(4242) is not None  # type: ignore[union-attr]

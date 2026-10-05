@@ -42,9 +42,19 @@ logger = logging.getLogger(__name__)
 OP_TOGGLE = "mt"
 #: ``adm:settings:bank`` — start editing the bank details.
 OP_BANK = "bank"
+#: ``adm:settings:access`` — cycle the access mode (§S3-1).
+OP_ACCESS = "access"
 
 #: ``cf:`` action name minted by the bank-details preview (§S2-7.3).
 ACTION_BANK = "settings_bank"
+
+#: Access modes in cycle order (§S3-1); the label is what the button shows.
+ACCESS_ORDER: tuple[str, ...] = ("open", "approval", "invite_only")
+ACCESS_LABELS: dict[str, str] = {
+    "open": "открытый",
+    "approval": "по заявке",
+    "invite_only": "по приглашению",
+}
 
 #: Audit action recorded for a settings write (the same string ``/maintenance``
 #: uses, so both entry points land in one place).
@@ -53,13 +63,17 @@ AUDIT_SETTING = "setting.set"
 SETTING_MAINTENANCE = "maintenance_mode"
 #: Audit ``target_id`` for the bank details.
 SETTING_BANK = "bank_details"
+#: Audit ``target_id`` for the access mode (§S3-1).
+SETTING_ACCESS = "access_mode"
 
 #: Inline copy (§rule 9).
 BUTTON_TOGGLE = "🔧 Тех. работы: {state}"
 BUTTON_BANK = "🏦 Реквизиты"
+BUTTON_ACCESS = "🔐 Доступ: {mode}"
 BUTTON_CANCEL = "✖️ Отмена"
 MAINTENANCE_STATE_ON = "🔴 вкл"
 MAINTENANCE_STATE_OFF = "🟢 выкл"
+ACCESS_TOAST = "🔐 Режим доступа: {mode}"
 
 BANK_NOT_SET = "не настроены"
 BANK_PROMPT = (
@@ -86,23 +100,35 @@ def bank_line(bank: str | None) -> str:
     return f"<code>{esc(bank)}</code>"
 
 
-def render_settings(*, maintenance: bool, bank: str | None) -> str:
-    """Format the settings card (§S2-7.1)."""
+def access_label(mode: str) -> str:
+    """Human label for an access mode (§S3-1)."""
+    return ACCESS_LABELS.get(mode, ACCESS_LABELS["approval"])
+
+
+def render_settings(*, maintenance: bool, bank: str | None, access: str) -> str:
+    """Format the settings card (§S2-7.1, §S3-1)."""
     return (
         "⚙️ <b>Настройки</b>\n\n"
         f"🔧 Тех. работы: {maintenance_state(maintenance)}\n"
+        f"🔐 Доступ: {access_label(access)}\n"
         f"🏦 Реквизиты: {bank_line(bank)}"
     )
 
 
-def settings_keyboard(*, maintenance: bool) -> types.InlineKeyboardMarkup:
-    """Keyboard of the settings card: toggle, bank details, back (§S2-7.1)."""
+def settings_keyboard(*, maintenance: bool, access: str) -> types.InlineKeyboardMarkup:
+    """Keyboard of the settings card: toggle, access, bank, back (§S2-7.1/S3-1)."""
     return types.InlineKeyboardMarkup(
         [
             [
                 types.InlineKeyboardButton(
                     BUTTON_TOGGLE.format(state=maintenance_state(maintenance)),
                     callback_data=AdminNav("settings", OP_TOGGLE).pack(),
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    BUTTON_ACCESS.format(mode=access_label(access)),
+                    callback_data=AdminNav("settings", OP_ACCESS).pack(),
                 )
             ],
             [
@@ -119,29 +145,33 @@ def settings_keyboard(*, maintenance: bool) -> types.InlineKeyboardMarkup:
     )
 
 
-async def _read(container: Container) -> tuple[bool, str | None]:
-    """Return ``(maintenance, bank)``, degrading to the defaults on a read error."""
+async def _read(container: Container) -> tuple[bool, str | None, str]:
+    """Return ``(maintenance, bank, access)``; defaults on a read error."""
     settings = container.settings_service
     if settings is None:  # pragma: no cover - container is wired at startup
-        return False, None
+        return False, None, "approval"
     try:
-        return await settings.maintenance_mode(), await settings.bank_details()
+        return (
+            await settings.maintenance_mode(),
+            await settings.bank_details(),
+            await settings.access_mode(),
+        )
     except Exception:
         logger.warning("settings screen read failed", exc_info=True)
-        return False, None
+        return False, None, "approval"
 
 
 async def _render(
     bot: Any, container: Container, chat_id: int, message_id: int
 ) -> None:
     """Render the settings card into ``message_id`` (§S2-7.1)."""
-    maintenance, bank = await _read(container)
+    maintenance, bank, access = await _read(container)
     await edit_or_send(
         bot,
         chat_id,
         message_id,
-        render_settings(maintenance=maintenance, bank=bank),
-        markup=settings_keyboard(maintenance=maintenance),
+        render_settings(maintenance=maintenance, bank=bank, access=access),
+        markup=settings_keyboard(maintenance=maintenance, access=access),
     )
 
 
@@ -187,6 +217,30 @@ async def _toggle(call: Any, bot: Any, container: Container) -> None:
     await _answer(bot, call, MAINTENANCE_TOAST_ON if new else MAINTENANCE_TOAST_OFF)
 
 
+async def _access(call: Any, bot: Any, container: Container) -> None:
+    """``adm:settings:access`` — cycle the access mode and re-render (§S3-1).
+
+    ``access_mode`` decides what ``/start`` does for a brand-new user, so this is
+    gated on ``settings.edit`` like the rest of the screen. The value cycles
+    ``open → approval → invite_only → open``; the old→new pair is audited.
+    """
+    if not await check_callback(call, Permission.SETTINGS_EDIT):
+        return
+    settings = container.settings_service
+    actor = int(call.from_user.id)
+    chat_id, message_id = _target(call)
+    if settings is None:  # pragma: no cover - container is wired at startup
+        await _answer(bot, call, texts.ERROR_GENERIC, alert=True)
+        return
+    old = await settings.access_mode()
+    index = ACCESS_ORDER.index(old) if old in ACCESS_ORDER else 0
+    new = ACCESS_ORDER[(index + 1) % len(ACCESS_ORDER)]
+    await settings.set_access_mode(new, updated_by=actor)
+    await _audit_setting(container, actor, SETTING_ACCESS, old, new)
+    await _render(bot, container, chat_id, message_id)
+    await _answer(bot, call, ACCESS_TOAST.format(mode=access_label(new)))
+
+
 async def _prompt_bank(call: Any, bot: Any, container: Container) -> None:
     """``adm:settings:bank`` — ask for new details and enter the FSM (§S2-7.3).
 
@@ -197,7 +251,7 @@ async def _prompt_bank(call: Any, bot: Any, container: Container) -> None:
         return
     actor = int(call.from_user.id)
     chat_id, message_id = _target(call)
-    _, bank = await _read(container)
+    _, bank, _ = await _read(container)
     await _set_state(bot, actor, chat_id)
     markup = types.InlineKeyboardMarkup(
         [
@@ -295,6 +349,9 @@ async def settings_screen(
     if action == OP_TOGGLE:
         await _toggle(call, bot, container)
         return
+    if action == OP_ACCESS:
+        await _access(call, bot, container)
+        return
     if action == OP_BANK:
         await _prompt_bank(call, bot, container)
         return
@@ -353,6 +410,8 @@ async def _answer(
 
 
 __all__ = [
+    "ACCESS_LABELS",
+    "ACCESS_ORDER",
     "ACTION_BANK",
     "AUDIT_SETTING",
     "BANK_NOT_SET",
@@ -361,10 +420,13 @@ __all__ = [
     "BANK_SAVED",
     "MAINTENANCE_TOAST_OFF",
     "MAINTENANCE_TOAST_ON",
+    "OP_ACCESS",
     "OP_BANK",
     "OP_TOGGLE",
+    "SETTING_ACCESS",
     "SETTING_BANK",
     "SETTING_MAINTENANCE",
+    "access_label",
     "admin_bank_message",
     "bank_action",
     "bank_line",

@@ -23,16 +23,22 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telebot.apihelper import ApiTelegramException
 
+from app import texts
+from app.callbacks import Access
+from app.db.base import utcnow
 from app.db.models import CardKind
 from app.db.repositories import admin_cards as admin_cards_repo
 from app.db.repositories import users as users_repo
 from app.permissions import Permission
 from app.services.admins import AdminService
+from app.services.users import DECISION_ACCEPT, DECISION_BLOCK, DECISION_REJECT
+from app.utils.text import esc
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +69,71 @@ ROUTES: dict[str, Route] = {
     CardKind.ADMIN_GRANT: Route(Permission.ADMINS_MANAGE),
     "alert": Route(Permission.SERVER_VIEW),
 }
+
+
+# --- access request card (§S3-2) --------------------------------------------
+
+#: Decision → the line appended to every copy of the card once it lands. Keyed by
+#: :mod:`app.services.users`' decision constants so a rename cannot silently drop
+#: the «обработал …» line from the card.
+_DECISION_LINES: dict[str, str] = {
+    DECISION_ACCEPT: texts.ACCESS_CARD_ACCEPTED,
+    DECISION_REJECT: texts.ACCESS_CARD_REJECTED,
+    DECISION_BLOCK: texts.ACCESS_CARD_BLOCKED,
+}
+
+
+def actor_label(actor: int | None, username: str | None = None) -> str:
+    """Return the admin's display label for a card («@neo» or «ID 7»)."""
+    if username:
+        return f"@{username}"
+    return "системой" if actor is None else f"ID {int(actor)}"
+
+
+def access_review_markup(tg_id: int) -> Any:
+    """Build the accept/reject/block keyboard of the access card (§S3-2.4)."""
+    from telebot.util import quick_markup
+
+    return quick_markup(
+        {
+            texts.BUTTON_ACCESS_ACCEPT: {
+                "callback_data": Access("accept", int(tg_id)).pack()
+            },
+            texts.BUTTON_ACCESS_REJECT: {
+                "callback_data": Access("reject", int(tg_id)).pack()
+            },
+            texts.BUTTON_ACCESS_BLOCK: {
+                "callback_data": Access("block", int(tg_id)).pack()
+            },
+        },
+        row_width=2,
+    )
+
+
+def render_access_card(
+    tg_id: int,
+    *,
+    username: str | None,
+    first_name: str | None,
+    created_at: datetime | None = None,
+    decision: str | None = None,
+    decided_by: str | None = None,
+) -> str:
+    """Render the §S3-2.4 access card (HTML-escaped).
+
+    The single renderer behind the card fanned out on ``/start``, the copy an
+    admin opens from ``adm:access`` and the edit pushed by :meth:`sync_card`, so
+    the three can never drift apart. ``decision``/``decided_by`` add the
+    «обработал …» line once a reviewer has acted.
+    """
+    who = f"@{esc(username)}" if username else texts.ACCESS_NO_USERNAME
+    name = esc(first_name) if first_name else texts.ACCESS_NO_NAME
+    when = (created_at or utcnow()).strftime("%d.%m.%Y %H:%M")
+    body = texts.ACCESS_CARD.format(tg_id=int(tg_id), who=who, name=name, time=when)
+    line = _DECISION_LINES.get(str(decision))
+    if line is not None:
+        body += "\n\n" + line.format(actor=esc(decided_by or "?"))
+    return body
 
 
 def _retry_after(exc: ApiTelegramException) -> float:
@@ -279,6 +350,40 @@ class Notifier:
             if message_id is not None:
                 await self._store_card(kind, ref_id, int(chat_id), message_id)
         return delivered
+
+    async def send_access_card(
+        self,
+        tg_id: int,
+        *,
+        username: str | None,
+        first_name: str | None,
+        created_at: datetime | None = None,
+        recipients: list[int] | None = None,
+    ) -> list[int]:
+        """Fan the «Новая заявка» card out to ``access.review`` staff (§S3-2.4).
+
+        ``recipients`` overrides the resolved reviewers so the ``adm:access``
+        screen can open a single copy for the acting admin; the copy is stored in
+        ``admin_cards`` either way, so a later ``sync_card`` edits every copy.
+        """
+        if recipients is None:
+            recipients = await self.recipients_for_kind(CardKind.ACCESS)
+        if not recipients:
+            logger.info("access request %s delivered to nobody", tg_id)
+            return []
+        return await self.send_card(
+            CardKind.ACCESS,
+            int(tg_id),
+            recipients,
+            render_access_card(
+                tg_id,
+                username=username,
+                first_name=first_name,
+                created_at=created_at,
+            ),
+            reply_markup=access_review_markup(int(tg_id)),
+            parse_mode="HTML",
+        )
 
     async def _store_card(
         self, kind: str, ref_id: int, chat_id: int, message_id: int

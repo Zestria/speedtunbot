@@ -56,6 +56,60 @@ async def test_users_set_status_unknown_returns_none(session: AsyncSession) -> N
     assert await users_repo.set_status(session, 123, UserStatus.APPROVED) is None
 
 
+async def test_claim_pending_wins_once_and_records_the_actor(
+    session: AsyncSession,
+) -> None:
+    """AC (§S3-2.2): the ``pending`` claim can only be won once."""
+    await users_repo.upsert_from_telegram(session, 7)
+    await users_repo.set_status(session, 7, UserStatus.PENDING)
+    await session.commit()
+
+    assert (
+        await users_repo.claim_pending(
+            session, 7, UserStatus.APPROVED, changed_by=1, note="access.accept"
+        )
+        is True
+    )
+    await session.commit()
+
+    # A second reviewer issuing the very same statement matches no row.
+    assert await users_repo.claim_pending(session, 7, UserStatus.BLOCKED) is False
+    await session.commit()
+
+    user = await users_repo.get(session, 7)
+    assert user is not None
+    assert user.status == UserStatus.APPROVED
+    assert user.status_changed_by == 1
+    assert user.status_note == "access.accept"
+
+
+async def test_claim_pending_ignores_a_non_pending_row(session: AsyncSession) -> None:
+    """An ``approved`` row is never re-claimed (no downgrade to ``blocked``)."""
+    await users_repo.upsert_from_telegram(session, 7)
+    await users_repo.set_status(session, 7, UserStatus.APPROVED)
+    await session.commit()
+
+    assert await users_repo.claim_pending(session, 7, UserStatus.BLOCKED) is False
+    assert await users_repo.claim_pending(session, 999, UserStatus.APPROVED) is False
+
+
+async def test_list_pending_returns_only_pending_oldest_first(
+    session: AsyncSession,
+) -> None:
+    """AC (§S3-2.7): the queue read never leaks a decided row."""
+    for tg_id, status in [
+        (9, UserStatus.PENDING),
+        (3, UserStatus.APPROVED),
+        (5, UserStatus.PENDING),
+    ]:
+        await users_repo.upsert_from_telegram(session, tg_id)
+        await users_repo.set_status(session, tg_id, status)
+    await session.commit()
+
+    rows = await users_repo.list_pending(session)
+    assert [int(row.tg_id) for row in rows] == [5, 9]
+
+
 async def test_users_list_broadcast_ids_filters_and_returns_ints(
     session: AsyncSession,
 ) -> None:

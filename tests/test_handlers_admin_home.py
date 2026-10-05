@@ -210,20 +210,23 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
     assert labels_of(owner) == [
         "👥 Пользователи",
         "💳 Платежи",
+        "⏳ Заявки (0)",
         "🖥 Сервер",
         "📢 Рассылка",
         "⚙️ Настройки",
         "🔄 Обновить",
     ]
-    # ``admin`` keeps ``users.view``/``payments.view`` and ``server.view`` but
-    # not ``settings.edit``.
+    # ``admin`` keeps ``users.view``/``payments.view``/``access.review`` and
+    # ``server.view`` but not ``settings.edit``.
     assert labels_of(admin) == [
         "👥 Пользователи",
         "💳 Платежи",
+        "⏳ Заявки (0)",
         "🖥 Сервер",
         "📢 Рассылка",
         "🔄 Обновить",
     ]
+    # ``support`` lacks ``access.review``, so the request queue stays hidden.
     assert labels_of(support) == ["👥 Пользователи", "🔄 Обновить"]
     assert labels_of(stranger) == ["🔄 Обновить"]
     assert payloads_of(owner)[-1] == "adm:menu"
@@ -232,6 +235,14 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
     assert "adm:server" in payloads_of(owner)
     assert "adm:broadcast" in payloads_of(owner)
     assert "adm:audit" not in payloads_of(owner)
+
+
+def test_dashboard_keyboard_shows_the_live_pending_count() -> None:
+    """AC (§S3-2.8): the «⏳ Заявки (N)» label carries the live count."""
+    owner = home.dashboard_keyboard(Role.OWNER, pending=3)
+
+    assert "⏳ Заявки (3)" in labels_of(owner)
+    assert "adm:access" in payloads_of(owner)
 
 
 # --- /admin command (§S2-1.8) ------------------------------------------------
@@ -342,6 +353,11 @@ def test_menu_keyboard_adds_the_admin_button_for_staff() -> None:
 async def test_start_shows_the_admin_button_only_for_staff(
     handler_container: Container, fake_bot: FakeBot
 ) -> None:
+    # ``open`` mode so the stranger's first ``/start`` shows a menu (S3-1).
+    settings = handler_container.settings_service
+    assert settings is not None
+    await settings.set_access_mode("open")
+
     await start_command(message(OWNER), fake_bot, handler_container)
     staff_menu = payloads_of(fake_bot.messages[-1][2]["reply_markup"])
 

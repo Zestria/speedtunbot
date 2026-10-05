@@ -37,6 +37,6 @@ def build_middlewares(container: Container, bot: Any = None) -> list[BaseMiddlew
     return [
         ContextMiddleware(container),
         MaintenanceMiddleware(container.settings_service, bot=bot),
-        AccessMiddleware(),
+        AccessMiddleware(bot=bot),
         ThrottleMiddleware(bot=bot),
     ]

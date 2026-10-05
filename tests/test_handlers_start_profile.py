@@ -82,6 +82,13 @@ async def get_status(
     return None if user is None else str(user.status)
 
 
+async def open_access(container: Container) -> None:
+    """Put the container in ``open`` mode so a new ``/start`` auto-approves."""
+    settings = container.settings_service
+    assert settings is not None
+    await settings.set_access_mode("open")
+
+
 # --- /start ----------------------------------------------------------------
 
 
@@ -91,6 +98,7 @@ async def test_start_creates_approved_row_and_panel_client(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """AC: the row is created here, with ``approved``, plus a panel client."""
+    await open_access(handler_container)
     panel = handler_container.panel
     assert isinstance(panel, FakePanel)
 
@@ -124,6 +132,7 @@ async def test_start_panel_outage_replies_and_alerts_owners(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """AC (B7): outage → friendly reply + staff alert, no exception."""
+    await open_access(handler_container)
     panel = handler_container.panel
     assert isinstance(panel, FakePanel)
     panel.unavailable = True
@@ -161,9 +170,61 @@ async def test_start_promotes_a_new_row_to_approved(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """The ``users`` row is inserted as ``new`` and promoted once, on creation."""
+    await open_access(handler_container)
     await start_command(message(USER), fake_bot, handler_container)
 
     assert await get_status(session_factory, USER) == UserStatus.APPROVED
+
+
+# --- /start access modes (§S3-1) --------------------------------------------
+
+
+async def test_start_approval_mode_parks_a_request_without_a_client(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (§S3-1): ``approval`` keeps the user ``pending`` and builds no client."""
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await start_command(message(USER), fake_bot, handler_container)
+
+    assert await get_status(session_factory, USER) == UserStatus.PENDING
+    assert "ensure_client" not in panel.calls
+    assert fake_bot.texts_to(99) == [texts.ACCESS_PENDING]
+
+
+async def test_start_approval_mode_repeat_start_keeps_the_status(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A repeat ``/start`` while ``pending`` must not reset the row."""
+    await start_command(message(USER), fake_bot, handler_container)
+    await start_command(message(USER), fake_bot, handler_container)
+
+    assert await get_status(session_factory, USER) == UserStatus.PENDING
+    assert fake_bot.texts_to(99) == [texts.ACCESS_PENDING, texts.ACCESS_PENDING]
+
+
+async def test_start_invite_only_mode_writes_no_row(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (§S3-1): ``invite_only`` refuses a stranger and writes no row."""
+    settings = handler_container.settings_service
+    assert settings is not None
+    await settings.set_access_mode("invite_only")
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await start_command(message(USER), fake_bot, handler_container)
+
+    assert await get_status(session_factory, USER) is None
+    assert fake_bot.texts_to(99) == [texts.ACCESS_INVITE_ONLY]
+    assert "ensure_client" not in panel.calls
 
 
 # --- /profile dashboard (S1-1) ---------------------------------------------
@@ -650,6 +711,7 @@ async def test_start_shows_the_main_menu(
     handler_container: Container, fake_bot: FakeBot
 ) -> None:
     """AC (S1-4.5): the welcome keeps its copy and gains the inline menu."""
+    await open_access(handler_container)
     await start_command(message(USER), fake_bot, handler_container)
 
     (_, text, kwargs) = fake_bot.messages[-1]
@@ -678,6 +740,7 @@ async def test_help_shows_the_same_menu_as_start(
     handler_container: Container, fake_bot: FakeBot
 ) -> None:
     """AC (S1-4.6): ``/help`` shows the reference and the identical keyboard."""
+    await open_access(handler_container)
     await start_command(message(USER), fake_bot, handler_container)
     start_menu = payloads_of(fake_bot.messages[-1][2]["reply_markup"])
 

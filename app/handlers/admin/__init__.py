@@ -4,8 +4,10 @@ One package for every admin screen. Each screen is a module-level ``async def``
 with the same ``(call|message, bot, container)`` shape the rest of the handlers
 use, so they are testable without a live poller. Callbacks all share the ``adm:``
 namespace (:class:`~app.callbacks.AdminNav`), so this package registers exactly
-one message handler and one callback handler; screens hook themselves into the
-:data:`~app.handlers.admin.nav.SCREENS` registry as their task lands.
+one message handler and one callback handler for the panel itself; screens hook
+themselves into the :data:`~app.handlers.admin.nav.SCREENS` registry as their task
+lands. A review queue that owns a *second* callback namespace (``acc:``) registers
+that one on top, next to the shared dispatcher.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any
 from app.container import Container
 
 # Importing the screen registers ``adm:payments`` in ``nav.SCREENS`` (§S2-4.2).
+from app.handlers.admin import access as access_screen  # noqa: F401
 from app.handlers.admin import payments as payments_screen  # noqa: F401
 
 # Same for ``adm:server`` plus the ``cf:`` restart action (§S2-5.4/.5).
@@ -63,3 +66,7 @@ def register_admin_handler(bot: Any, container: Container) -> None:
     # The settings screen owns the ``admin_bank`` free-text prompt (§S2-7.3);
     # its ``adm:settings`` buttons ride the shared callback above.
     settings_screen.register_settings_handler(bot, container)
+
+    # The access screen owns the ``acc:`` review namespace (§S3-2.6); its
+    # ``adm:access`` buttons ride the shared callback above.
+    access_screen.register_access_handler(bot, container)

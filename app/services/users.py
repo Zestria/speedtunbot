@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 ACTION_BAN = "user.ban"
 ACTION_UNBAN = "user.unban"
 ACTION_REGISTER = "user.register"
+ACTION_APPROVE = "user.approve"
+ACTION_REJECT = "user.reject"
+ACTION_BLOCK = "user.block"
 
 
 def now_ms() -> int:
@@ -64,6 +67,38 @@ class AccessChange:
     panel_error: str | None = None
 
 
+#: Access-review decisions — the strings mirror the ``acc:`` callback actions
+#: (§S3-2.3), so the handler can pass ``payload.action`` straight through.
+DECISION_ACCEPT = "accept"
+DECISION_REJECT = "reject"
+DECISION_BLOCK = "block"
+
+#: Decision → the ``users.status`` the claim writes.
+DECISION_STATUS: dict[str, UserStatus] = {
+    DECISION_ACCEPT: UserStatus.APPROVED,
+    DECISION_REJECT: UserStatus.REJECTED,
+    DECISION_BLOCK: UserStatus.BLOCKED,
+}
+
+
+@dataclass(frozen=True)
+class AccessDecision:
+    """Outcome of an access review (§S3-2.3)."""
+
+    tg_id: int
+    #: The status that was written, or ``None`` when the claim was lost.
+    status: UserStatus | None
+    #: ``True`` when the request was no longer ``pending`` (somebody else won).
+    already: bool
+    #: The decided row (``None`` for a lost claim), so the caller can re-render.
+    user: User | None = None
+
+    @property
+    def accepted(self) -> bool:
+        """Return ``True`` when *this* call approved the request."""
+        return not self.already and self.status == UserStatus.APPROVED
+
+
 class UserService:
     """Access-status transitions over ``users`` + the matching panel client."""
 
@@ -78,16 +113,21 @@ class UserService:
         self._panel = panel
         self._audit = audit
 
-    async def register(
-        self, tg_id: int, *, username: str | None = None, first_name: str | None = None
+    async def request_access(
+        self,
+        tg_id: int,
+        *,
+        username: str | None = None,
+        first_name: str | None = None,
+        status: UserStatus = UserStatus.PENDING,
     ) -> Registration:
-        """Create/refresh the user row and ensure the panel client exists.
+        """Create/refresh the row for an access request; **never** touches the panel.
 
-        Access control is still open in M0 (M1 rewrites ``/start``), so a **newly
-        created** row is promoted from ``new`` to :data:`UserStatus.APPROVED`
-        right away. An existing row keeps its status untouched: ``/start`` must
-        not overwrite an administrative state (``pending``/``rejected``/``blocked``)
-        back to ``approved``.
+        Row creation is ``/start``'s job (§M0-05.3) and the panel client is built
+        **only at approval time** (§S3-1): an ``approval``/``invite_only`` mode
+        must leave the panel untouched. An **existing** row keeps its status — a
+        repeat ``/start`` must not reset an administrative state
+        (``pending``/``rejected``/``blocked``) back to the requested one.
         """
         sessionmaker = self._require_sessionmaker()
         async with sessionmaker() as session:
@@ -97,13 +137,54 @@ class UserService:
             )
             if created:
                 await users_repo.set_status(
-                    session, int(tg_id), UserStatus.APPROVED, note="self-registration"
+                    session, int(tg_id), status, note="request-access"
                 )
             await session.commit()
 
         await self._audit_log(
             int(tg_id), ACTION_REGISTER, target=tg_id, username=username
         )
+        return Registration(int(tg_id), user, returning=not created)
+
+    async def approve(
+        self,
+        tg_id: int,
+        actor: int | None = None,
+        *,
+        username: str | None = None,
+        first_name: str | None = None,
+        role: str | None = None,
+    ) -> Registration:
+        """Approve a user and ensure their panel client exists (§S3-1).
+
+        The DB row is written **first** (status ``approved``), then the panel
+        client is created idempotently — ``ensure_client`` returns an existing
+        client unchanged, so calling this twice yields exactly one client. A
+        panel outage propagates as :class:`~app.errors.PanelError` with the row
+        already ``approved``, so ``/start`` replies and alerts without losing the
+        state (§0.1 rule 7).
+        """
+        sessionmaker = self._require_sessionmaker()
+        async with sessionmaker() as session:
+            await users_repo.upsert_from_telegram(
+                session, int(tg_id), username=username, first_name=first_name
+            )
+            user = await users_repo.set_status(
+                session,
+                int(tg_id),
+                UserStatus.APPROVED,
+                changed_by=actor,
+                note="approve",
+            )
+            await session.commit()
+
+        await self._audit_log(
+            actor if actor is not None else int(tg_id),
+            ACTION_APPROVE,
+            role=role,
+            target=tg_id,
+        )
+        assert user is not None  # upsert_from_telegram guarantees the row
         if self._panel is None:
             return Registration(int(tg_id), user, returning=False)
 
@@ -116,6 +197,57 @@ class UserService:
         client = await self._panel.ensure_client(int(tg_id), username or "")
         await self._store_client_uuid(int(tg_id), client.id)
         return Registration(int(tg_id), user, returning=False)
+
+    async def decide_access(
+        self,
+        tg_id: int,
+        actor: int | None,
+        decision: str,
+        *,
+        role: str | None = None,
+    ) -> AccessDecision:
+        """Claim and apply one access review (§S3-2.3).
+
+        :func:`users_repo.claim_pending` is the race guard: the atomic
+        ``UPDATE … WHERE status='pending'`` lets exactly one reviewer flip a
+        request, and the loser gets ``already=True`` **without** any side effect
+        — no panel client, no row fetch, no notice.
+
+        ``accept`` then runs :meth:`approve`, which is idempotent
+        (``ensure_client`` returns an existing client unchanged), so a lost race
+        or a retry can never build a second client. A panel outage propagates as
+        :class:`~app.errors.PanelError` with the row already ``approved``, so
+        ``/start`` self-heals the client later.
+        """
+        try:
+            target = DECISION_STATUS[decision]
+        except KeyError as exc:
+            raise ValueError(f"unknown access decision: {decision!r}") from exc
+
+        sessionmaker = self._require_sessionmaker()
+        async with sessionmaker() as session:
+            won = await users_repo.claim_pending(
+                session,
+                int(tg_id),
+                target,
+                changed_by=actor,
+                note=f"access.{decision}",
+            )
+            user = await users_repo.get(session, int(tg_id)) if won else None
+            await session.commit()
+        if not won:
+            return AccessDecision(int(tg_id), None, already=True)
+
+        if decision == DECISION_ACCEPT:
+            await self.approve(tg_id, actor, role=role)
+        else:
+            await self._audit_log(
+                actor if actor is not None else int(tg_id),
+                ACTION_REJECT if decision == DECISION_REJECT else ACTION_BLOCK,
+                role=role,
+                target=tg_id,
+            )
+        return AccessDecision(int(tg_id), target, already=False, user=user)
 
     async def ban(
         self, tg_id: int, *, actor: int | None = None, role: str | None = None

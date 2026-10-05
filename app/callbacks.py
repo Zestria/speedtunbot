@@ -175,10 +175,15 @@ class Pay(_IntAction):
 @_register
 @dataclass(frozen=True)
 class Access(_IntAction):
-    """Access requests: ``acc:<ok|no>:<request_id>`` (M1)."""
+    """Access review: ``acc:<accept|reject|block>:<tg_id>`` (§S3-2.1).
+
+    The int is the *requesting* user's Telegram id — the access request has no
+    id of its own, ``users.tg_id`` **is** the request. The clicking admin is
+    always derived from ``call``, never encoded here.
+    """
 
     ns: ClassVar[str] = "acc"
-    ACTIONS: ClassVar[frozenset[str]] = frozenset({"ok", "no"})
+    ACTIONS: ClassVar[frozenset[str]] = frozenset({"accept", "reject", "block"})
 
 
 @_register
