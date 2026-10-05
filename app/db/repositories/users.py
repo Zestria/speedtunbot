@@ -119,6 +119,20 @@ async def set_panel_client_uuid(
         await session.flush()
 
 
+async def set_bot_blocked(
+    session: AsyncSession, tg_id: int, blocked: bool = True
+) -> None:
+    """Mark a user as (not) blocking the bot (Telegram 403 / "chat not found").
+
+    Used by :meth:`app.services.notifier.Notifier.safe_send`; a missing user row
+    is ignored (the chat id may belong to a stranger or a group).
+    """
+    user = await session.get(User, tg_id)
+    if user is not None:
+        user.bot_blocked = blocked
+        await session.flush()
+
+
 def to_dict(user: User) -> dict[str, Any]:
     """Small helper for logging/tests: serialise the public fields."""
     return {

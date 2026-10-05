@@ -101,6 +101,8 @@ async def run() -> None:
 
     # Wire RBAC enforcement details (M0-06) before handlers are registered.
     permissions.configure(bot=bot, admins=container.admins)
+    if container.notifier is not None:
+        container.notifier.attach_bot(bot)
 
     bot.add_custom_filter(StateFilter(bot))
     # Order: Context → Maintenance → Access → Throttle (§M0-05.8).

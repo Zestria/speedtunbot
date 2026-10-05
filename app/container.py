@@ -52,7 +52,7 @@ class Container:
     def init_rbac(self) -> tuple[AdminService, Notifier]:
         """Create the admin service + notifier (needs the DB sessionmaker)."""
         admins = AdminService(self.settings, self.sessionmaker)
-        notifier = Notifier(admins)
+        notifier = Notifier(admins, sessionmaker=self.sessionmaker)
         self.admins = admins
         self.notifier = notifier
         return admins, notifier
