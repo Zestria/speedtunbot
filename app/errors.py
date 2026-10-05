@@ -24,6 +24,10 @@ class ClientNotFound(PanelError):
     """The requested panel client does not exist."""
 
 
+class NotSupportedError(PanelError):
+    """The panel/py3xui cannot do this (e.g. Xray restart)."""
+
+
 class PermissionDenied(AppError):
     """The acting user lacks the permission required for the action."""
 

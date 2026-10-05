@@ -6,3 +6,5 @@ banned_users.json
 .ruff_cache
 .mypy_cache
 data/
+# Unsafe, unintegrated M0-03 introspection helper (never committed; superseded by scripts/smoke_panel.py)
+scripts/spike_panel.py

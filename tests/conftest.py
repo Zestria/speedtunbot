@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -16,6 +17,21 @@ from sqlalchemy.pool import StaticPool
 from app.db import models  # noqa: F401  (register tables)
 from app.db.base import Base
 from app.db.session import attach_sqlite_pragmas
+from app.settings import Settings
+
+
+@pytest.fixture
+def settings() -> Settings:
+    """Minimal valid :class:`Settings` for panel/service tests."""
+    return Settings(
+        _env_file=None,
+        bot_token="123456:AA-test",
+        vpn_token="vpn-token-value",
+        domain="https://panel.example.com/",
+        sub_url_base="https://panel.example.com/sub/",
+        inbound_id=1,
+        owner_ids=[1],
+    )
 
 
 @pytest_asyncio.fixture

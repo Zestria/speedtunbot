@@ -13,7 +13,6 @@ from telebot.async_telebot import AsyncTeleBot
 from telebot.types import Message
 
 from config import (
-    ADMIN_IDS,
     IS_MAINTENANCE_MODE,
     BANNED_FILE,
 )
@@ -24,25 +23,27 @@ from loads import (
 )
 from utils import save_banned_users
 
+from app.permissions import Permission, get_role, require
+
 
 def register_legacy_admin_handlers(bot: AsyncTeleBot) -> None:
     @bot.message_handler(commands='maintenance')
+    @require(Permission.MAINTENANCE_TOGGLE)
     async def maintenance_handler(message: Message):
-        if message.from_user.id in ADMIN_IDS:
-            async with is_maintenance_lock:
-                global IS_MAINTENANCE_MODE
-                IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
-                await asyncio.sleep(0)
+        async with is_maintenance_lock:
+            global IS_MAINTENANCE_MODE
+            IS_MAINTENANCE_MODE = not IS_MAINTENANCE_MODE
+            await asyncio.sleep(0)
 
-                status = "🔴 <b>включён</b>"
-                if not IS_MAINTENANCE_MODE:
-                    status = "🟢 <b>выключен</b>"
-                text = f"Режим техобслуживания {status}"
-                await bot.send_message(
-                    message.from_user.id,
-                    text,
-                    parse_mode="HTML"
-                )
+            status = "🔴 <b>включён</b>"
+            if not IS_MAINTENANCE_MODE:
+                status = "🟢 <b>выключен</b>"
+            text = f"Режим техобслуживания {status}"
+            await bot.send_message(
+                message.from_user.id,
+                text,
+                parse_mode="HTML"
+            )
 
     # Админ может посмотреть список всех юзеров
     @bot.message_handler(commands='list')
@@ -57,10 +58,8 @@ def register_legacy_admin_handlers(bot: AsyncTeleBot) -> None:
     # Админ может банить пользователей
     # Бот пишет забаненному юзеру, что он забанен и больше не отвечает до разбана
     @bot.message_handler(commands='ban')
+    @require(Permission.USERS_BAN)
     async def ban_handler(message: Message):
-        if message.from_user.id not in ADMIN_IDS:
-            return
-
         parts = message.text.split()
 
         if len(parts) < 2 or not parts[1].isdigit():
@@ -73,7 +72,7 @@ def register_legacy_admin_handlers(bot: AsyncTeleBot) -> None:
 
         target_id = int(parts[1])
 
-        if target_id in ADMIN_IDS:
+        if await get_role(target_id) is not None:
             await bot.send_message(
                 message.chat.id,
                 "⚠️ Нельзя забанить администратора."
@@ -101,10 +100,8 @@ def register_legacy_admin_handlers(bot: AsyncTeleBot) -> None:
         )
 
     @bot.message_handler(commands='unban')
+    @require(Permission.USERS_BAN)
     async def unban_handler(message: Message):
-        if message.from_user.id not in ADMIN_IDS:
-            return
-
         parts = message.text.split()
         if len(parts) < 2 or not parts[1].isdigit():
             await bot.send_message(
@@ -142,10 +139,8 @@ def register_legacy_admin_handlers(bot: AsyncTeleBot) -> None:
         )
 
     @bot.message_handler(commands='banned_list')
+    @require(Permission.USERS_BAN)
     async def banned_list_handler(message: Message):
-        if message.from_user.id not in ADMIN_IDS:
-            return
-
         if not banned:
             await bot.send_message(
                 message.chat.id,

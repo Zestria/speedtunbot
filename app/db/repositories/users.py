@@ -52,6 +52,33 @@ async def upsert_from_telegram(
     return user
 
 
+async def touch(
+    session: AsyncSession,
+    tg_id: int,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> User | None:
+    """Refresh an **existing** user row from Telegram profile data.
+
+    Unlike :func:`upsert_from_telegram` this **never inserts**: a stranger gets
+    ``None`` and no row is created (row creation happens in ``/start`` — M0-09.1,
+    see ``TASK_PLAN.md`` §M0-05.3). A reachable user is clearly no longer
+    blocking the bot, so ``bot_blocked`` is reset.
+    """
+    user = await session.get(User, tg_id)
+    if user is None:
+        return None
+    if username is not None:
+        user.username = username
+    if first_name is not None:
+        user.first_name = first_name
+    user.bot_blocked = False
+    user.last_seen_at = utcnow()
+    await session.flush()
+    return user
+
+
 async def set_status(
     session: AsyncSession,
     tg_id: int,

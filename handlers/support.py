@@ -2,9 +2,10 @@ from telebot.async_telebot import AsyncTeleBot
 from telebot.types import Message
 
 from config import (
-    ADMIN_IDS,
     UserStates
 )
+
+from app.permissions import Permission, require, staff_with
 
 
 def register_support_handler(bot: AsyncTeleBot):
@@ -53,7 +54,7 @@ def register_support_handler(bot: AsyncTeleBot):
                 f"ID: {message.from_user.id}"
             )
 
-        for admin_id in ADMIN_IDS:
+        for admin_id in await staff_with(Permission.SUPPORT_REPLY, "notify_support"):
             await bot.send_message(
                 admin_id,
                 f"📨 <b>Новое обращение в поддержку</b>\n\n"
@@ -63,10 +64,8 @@ def register_support_handler(bot: AsyncTeleBot):
             )
 
     @bot.message_handler(commands='support_user')
+    @require(Permission.SUPPORT_REPLY)
     async def support_user_handler(message: Message):
-        if message.from_user.id not in ADMIN_IDS:
-            return
-
         current_state = await bot.get_state(
             message.from_user.id,
             message.chat.id

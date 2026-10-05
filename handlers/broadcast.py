@@ -6,21 +6,20 @@ from telebot.types import Message
 from py3xui import Inbound
 
 from config import (
-    INBOUND_ID,
-    ADMIN_IDS
+    INBOUND_ID
 )
 from loads import (
     api,
     banned
 )
 
+from app.permissions import Permission, require
+
 
 def register_broadcast_handler(bot: AsyncTeleBot):
     @bot.message_handler(commands='broadcast')
+    @require(Permission.BROADCAST_SEND)
     async def broadcast_handler(message: Message):
-        if message.from_user.id not in ADMIN_IDS:
-            return
-
         text = message.text.partition(' ')[2].strip()
         if not text:
             await bot.send_message(

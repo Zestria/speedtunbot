@@ -87,23 +87,25 @@ async def run() -> None:
     container = build_container(settings)
     _warn_if_local_sub_url(settings)
     await init_database(container)
+    container.init_rbac()
+    container.init_settings()
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.
     from telebot.asyncio_filters import StateFilter
 
+    from app import permissions
+    from app.middlewares import build_middlewares
     from handlers import register_all_handlers
     from loads import bot
-    from middlewares import (
-        BanMiddleware,
-        MaintenanceMiddleware,
-        ThrottlingMiddleware,
-    )
+
+    # Wire RBAC enforcement details (M0-06) before handlers are registered.
+    permissions.configure(bot=bot, admins=container.admins)
 
     bot.add_custom_filter(StateFilter(bot))
-    bot.setup_middleware(ThrottlingMiddleware())
-    bot.setup_middleware(MaintenanceMiddleware())
-    bot.setup_middleware(BanMiddleware())
+    # Order: Context → Maintenance → Access → Throttle (§M0-05.8).
+    for middleware in build_middlewares(container, bot):
+        bot.setup_middleware(middleware)
     register_all_handlers(bot)
 
     me = await bot.get_me()
