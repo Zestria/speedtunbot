@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.container import Container
+from app.handlers.admin import register_admin_handler
 from app.handlers.ban import register_ban_handler
 from app.handlers.broadcast import register_broadcast_handler
 from app.handlers.confirm import register_confirm_handler
@@ -24,6 +25,7 @@ from app.handlers.start import register_help_handler, register_start_handler
 from app.handlers.support import register_support_handler
 
 __all__ = [
+    "register_admin_handler",
     "register_all_handlers",
     "register_ban_handler",
     "register_broadcast_handler",
@@ -48,3 +50,4 @@ def register_all_handlers(bot: Any, container: Container) -> None:
     register_broadcast_handler(bot, container)
     register_ban_handler(bot, container)
     register_maintenance_handler(bot, container)
+    register_admin_handler(bot, container)

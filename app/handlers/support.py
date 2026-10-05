@@ -135,10 +135,39 @@ async def support_user_command(message: Any, bot: Any, container: Container) -> 
         await reply(bot, chat_id, texts.SUPPORT_USER_USAGE, parse_mode="HTML")
         return
 
+    await enter_writing_to_user(bot, chat_id, container, tg_id, target)
+
+
+async def enter_writing_to_user(
+    bot: Any,
+    chat_id: int,
+    container: Container,
+    tg_id: int,
+    target: int,
+    *,
+    message_id: int | None = None,
+) -> None:
+    """Enter the «writing to a user» state aimed at ``target`` (§S2-3.11).
+
+    The single entry point behind both ``/support_user <tg_id>`` and the admin
+    user card's «✉️ Написать» button: the state and the FSM ``target_user_id``
+    are identical, so :func:`support_relay` delivers the reply either way. The
+    card passes its own ``message_id`` (and the acting admin's ``tg_id``) so the
+    confirmation replaces the card; the command passes ``None`` for a new message.
+
+    ``container`` is unused today and kept for the handler-shaped signature the
+    other shared entry points have (:func:`enter_support`).
+    """
+    target = int(target)
     await bot.set_state(tg_id, UserStates.writing_to_user, chat_id)
     async with bot.retrieve_data(tg_id, chat_id) as data:
         data["target_user_id"] = target
-    await reply(bot, chat_id, texts.SUPPORT_USER_ENTERED.format(tg_id=target))
+    await edit_or_send(
+        bot,
+        chat_id,
+        message_id,
+        texts.SUPPORT_USER_ENTERED.format(tg_id=target),
+    )
 
 
 async def support_relay(message: Any, bot: Any, container: Container) -> None:
@@ -189,6 +218,7 @@ def register_support_handler(bot: Any, container: Container) -> None:
 
 __all__ = [
     "enter_support",
+    "enter_writing_to_user",
     "register_support_handler",
     "support_command",
     "support_media",

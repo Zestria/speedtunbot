@@ -17,3 +17,7 @@ class UserStates(StatesGroup):
 
     waiting_for_help = State()
     writing_to_user = State()
+    #: Admin users screen: waiting for a Telegram ID / ``@username`` (§S2-2.7).
+    admin_search = State()
+    #: Admin user card: waiting for a hand-typed day count (§S2-3.6).
+    admin_grant = State()

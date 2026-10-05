@@ -494,22 +494,37 @@ class PaymentService:
         if not recipients:
             logger.info("payment %s review card delivered to nobody", payment_id)
             return
-        from telebot.util import quick_markup
-
-        markup = quick_markup(
-            {
-                texts.BUTTON_APPROVE: {"callback_data": f"pay:ok:{payment_id}"},
-                texts.BUTTON_DECLINE: {"callback_data": f"pay:no:{payment_id}"},
-            },
-            row_width=2,
-        )
         await notifier.send_card(
             CardKind.PAYMENT,
             int(payment_id),
             recipients,
             self._render_review_card(view),
-            reply_markup=markup,
+            reply_markup=self.review_markup(payment_id),
             parse_mode="HTML",
+        )
+
+    async def render_review_card(self, payment_id: int) -> str | None:
+        """Return the review-card text for ``payment_id`` (§S2-4.3); ``None`` if gone.
+
+        The single renderer behind both the card fanned out on submit and the
+        payments section's pending queue, so an admin opening a queue row sees
+        exactly the standard card — never a second, drifting version of it.
+        """
+        view = await self.card_context(payment_id)
+        if view is None:
+            return None
+        return self._render_review_card(view)
+
+    def review_markup(self, payment_id: int) -> Any:
+        """Build the approve/decline keyboard of the review card (§M0-10.3)."""
+        from telebot.util import quick_markup
+
+        return quick_markup(
+            {
+                texts.BUTTON_APPROVE: {"callback_data": f"pay:ok:{int(payment_id)}"},
+                texts.BUTTON_DECLINE: {"callback_data": f"pay:no:{int(payment_id)}"},
+            },
+            row_width=2,
         )
 
     def _render_review_card(self, view: PaymentView) -> str:

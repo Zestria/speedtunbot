@@ -13,7 +13,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import utcnow
@@ -101,6 +101,22 @@ async def list_by_status(
     """Return every payment in ``status``, newest first."""
     result = await session.execute(
         select(Payment).where(Payment.status == str(status)).order_by(Payment.id.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_by_statuses(
+    session: AsyncSession, statuses: Collection[str | PaymentStatus]
+) -> list[Payment]:
+    """Return every payment in ``statuses``, newest first (§S2-4.1).
+
+    The payments section's list read: ``PENDING_STATUSES`` gives the review queue
+    and the decided statuses give the history page.
+    """
+    result = await session.execute(
+        select(Payment)
+        .where(Payment.status.in_([str(s) for s in statuses]))
+        .order_by(Payment.id.desc())
     )
     return list(result.scalars().all())
 
@@ -230,3 +246,58 @@ async def mark_applied(session: AsyncSession, payment_id: int) -> None:
         update(Payment).where(Payment.id == int(payment_id)).values(applied_at=utcnow())
     )
     await session.flush()
+
+
+async def count_by_statuses(session: AsyncSession, statuses: Collection[str]) -> int:
+    """Return how many payments are in ``statuses`` (dashboard counter, §S2-1.4)."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(Payment)
+        .where(Payment.status.in_([str(s) for s in statuses]))
+    )
+    return int(result.scalar_one())
+
+
+async def user_totals(session: AsyncSession, tg_id: int) -> tuple[int, int]:
+    """Return ``(count, sum)`` of a user's approved payments (§S2-3.1).
+
+    Only ``approved`` rows count, so declined/revoked attempts never inflate the
+    figure the admin card shows; a user without payments yields ``(0, 0)``.
+    """
+    result = await session.execute(
+        select(func.count(), func.coalesce(func.sum(Payment.price), 0)).where(
+            Payment.user_tg_id == int(tg_id),
+            Payment.status == PaymentStatus.APPROVED,
+        )
+    )
+    count, total = result.one()
+    return int(count), int(total)
+
+
+async def stats(session: AsyncSession, *, since: datetime) -> tuple[int, int]:
+    """Return ``(count, revenue)`` for the window starting at ``since`` (§S2-4.1).
+
+    Deliberately a thin alias of :func:`revenue_since` rather than a second query:
+    the payments section and the dashboard must report the same numbers, and one
+    implementation of "approved **and** applied since" is the only way to
+    guarantee that declined/revoked rows can never leak into either figure.
+    """
+    return await revenue_since(session, since=since)
+
+
+async def revenue_since(session: AsyncSession, *, since: datetime) -> tuple[int, int]:
+    """Return ``(count, revenue)`` of approved payments applied since ``since``.
+
+    Only ``approved`` rows with an ``applied_at`` timestamp count, so declined
+    and revoked payments are excluded by construction and the figure matches the
+    payments stats screen (S2-4).
+    """
+    result = await session.execute(
+        select(func.count(), func.coalesce(func.sum(Payment.price), 0)).where(
+            Payment.status == PaymentStatus.APPROVED,
+            Payment.applied_at.is_not(None),
+            Payment.applied_at >= since,
+        )
+    )
+    count, total = result.one()
+    return int(count), int(total)

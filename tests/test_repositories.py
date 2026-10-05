@@ -92,6 +92,36 @@ async def test_users_list_approved(session: AsyncSession) -> None:
     assert [u.tg_id for u in approved] == [1, 3]
 
 
+async def test_users_list_all_returns_every_status_oldest_first(
+    session: AsyncSession,
+) -> None:
+    """``list_all`` keeps every status, ordered by ``tg_id`` (§S2-2.1)."""
+    for tg_id, status in [
+        (3, UserStatus.BLOCKED),
+        (1, UserStatus.NEW),
+        (2, UserStatus.APPROVED),
+    ]:
+        await users_repo.upsert_from_telegram(session, tg_id)
+        await users_repo.set_status(session, tg_id, status)
+    await session.commit()
+
+    users = await users_repo.list_all(session)
+    assert [u.tg_id for u in users] == [1, 2, 3]
+
+
+async def test_users_search_by_id_and_username(session: AsyncSession) -> None:
+    """Digits match ``tg_id``; otherwise ``username`` case-insensitively."""
+    await users_repo.upsert_from_telegram(session, 500, username="Neo")
+    await users_repo.upsert_from_telegram(session, 501, username="trinity")
+    await session.commit()
+
+    assert [u.tg_id for u in await users_repo.search(session, "500")] == [500]
+    assert [u.tg_id for u in await users_repo.search(session, "neo")] == [500]
+    assert [u.tg_id for u in await users_repo.search(session, "@TRINITY")] == [501]
+    assert await users_repo.search(session, "nobody") == []
+    assert await users_repo.search(session, "   ") == []
+
+
 async def test_settings_get_set(session: AsyncSession) -> None:
     session.add(Setting(key="k", value=None))
     await session.commit()

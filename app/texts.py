@@ -360,6 +360,9 @@ BUTTON_MENU_PAY = "💳 Оплата"
 #: constant each instead of two literals that could drift apart.
 BUTTON_MENU_INSTR = BUTTON_PROFILE_INSTR
 BUTTON_MENU_SUPPORT = BUTTON_PROFILE_SUPPORT
+#: Staff-only entry to the admin dashboard, appended on /start and /help
+#: when the viewer holds ``users.view`` (§S2-1.11).
+BUTTON_MENU_ADMIN = "🛠 Админ-панель"
 
 # --- link regeneration + post-payment polish (S1-5) -------------------------
 

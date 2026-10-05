@@ -64,6 +64,7 @@ def test_pack_rejects_multibyte_overflow() -> None:
         (Support(action="reply", ref_id=5), "sup:reply:5"),
         (Broadcast(action="confirm", ref_id=1), "bc:confirm:1"),
         (AdminNav(section="users"), "adm:users"),
+        (AdminNav(section="users", action="card", arg="123"), "adm:users:card:123"),
         (ProfileNav(section="vpn"), "prf:vpn"),
     ],
 )
@@ -143,7 +144,7 @@ def test_confirm_token_payload_stays_within_budget() -> None:
         "pay:sel:abc",  # id is not an int
         "pay:nope:1",  # unknown action
         "adm",  # menu: missing section
-        "adm:users:1",  # menu: too many segments
+        "adm:users:a:b:c",  # admin: too many segments
         "adm:nope",  # unknown section
         "cf:",  # empty token
         "cf:x:",  # empty cancel token

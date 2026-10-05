@@ -183,7 +183,11 @@ class FakePanel:
         ips = 0 if limit_ip is None else max(0, int(limit_ip))
 
         def apply(client: Client) -> bool:
+            # The gateway writes ``total_gb`` but reads ``Client.total`` back in
+            # ``get_traffic``, so the fake mirrors the quota into both fields —
+            # otherwise a limit set through the card would read as «∞» (§S2-3.8).
             client.total_gb = total
+            client.total = total
             client.limit_ip = ips
             return True
 

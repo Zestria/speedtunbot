@@ -221,8 +221,15 @@ class Broadcast(_IntAction):
 
 @_register
 @dataclass(frozen=True)
-class AdminNav(_Menu):
-    """Admin panel navigation: ``adm:<section>``."""
+class AdminNav(Callback):
+    """Admin panel navigation: ``adm:<section>[:<action>[:<arg>]]`` (§S2-1.1).
+
+    ``section`` names the *screen* (validated against :data:`SECTIONS`); the
+    optional ``action``/``arg`` carry a screen-local command (e.g.
+    ``adm:users:card:123``). The fixed 2–4-segment shape means a new screen or
+    action never needs a new telebot callback handler — the same reason Stage 1
+    used one ``prf:`` handler (§S2-1).
+    """
 
     ns: ClassVar[str] = "adm"
     SECTIONS: ClassVar[frozenset[str]] = frozenset(
@@ -240,6 +247,31 @@ class AdminNav(_Menu):
             "back",
         }
     )
+
+    section: str
+    action: str | None = None
+    arg: str | None = None
+
+    def parts(self) -> tuple[str, ...]:
+        parts: list[str] = [self.ns, self.section]
+        if self.action is not None:
+            parts.append(self.action)
+            if self.arg is not None:
+                parts.append(self.arg)
+        return tuple(parts)
+
+    @classmethod
+    def parse(cls, segments: list[str]) -> AdminNav:
+        if not 2 <= len(segments) <= 4:
+            raise InvalidCallback(f"adm: expected 2-4 segments, got {segments!r}")
+        ns, section = segments[0], segments[1]
+        if ns != cls.ns:
+            raise InvalidCallback(f"adm: wrong namespace {ns!r}")
+        if section not in cls.SECTIONS:
+            raise InvalidCallback(f"adm: unknown section {section!r}")
+        action = segments[2] if len(segments) >= 3 else None
+        arg = segments[3] if len(segments) == 4 else None
+        return cls(section=section, action=action, arg=arg)
 
 
 @_register

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import utcnow
@@ -115,6 +115,37 @@ async def list_blocked(session: AsyncSession) -> list[User]:
     return list(result.scalars().all())
 
 
+async def list_all(session: AsyncSession) -> list[User]:
+    """Return **every** user regardless of status, oldest first (§S2-2.1).
+
+    The admin users list shows all statuses, so this is the unfiltered variant
+    of :func:`list_approved`/:func:`list_blocked`; ordering by ``tg_id`` keeps
+    the oldest (lowest id) accounts on the first page.
+    """
+    result = await session.execute(select(User).order_by(User.tg_id))
+    return list(result.scalars().all())
+
+
+async def search(session: AsyncSession, query: str) -> list[User]:
+    """Find users by Telegram id or username (§S2-2.1).
+
+    A digits-only ``query`` is matched against ``tg_id`` exactly; anything else
+    is matched against ``username`` case-insensitively (a leading ``@`` is
+    stripped). No match yields ``[]``. Ordering matches :func:`list_all`.
+    """
+    needle = (query or "").strip()
+    if needle.startswith("@"):
+        needle = needle[1:]
+    if not needle:
+        return []
+    if needle.isdigit():
+        statement = select(User).where(User.tg_id == int(needle))
+    else:
+        statement = select(User).where(func.lower(User.username) == needle.lower())
+    result = await session.execute(statement.order_by(User.tg_id))
+    return list(result.scalars().all())
+
+
 async def list_broadcast_ids(session: AsyncSession) -> list[int]:
     """Return broadcast recipients: ``approved`` and not blocking the bot (§M0-09.4).
 
@@ -154,6 +185,18 @@ async def set_bot_blocked(
     if user is not None:
         user.bot_blocked = blocked
         await session.flush()
+
+
+async def counts_by_status(session: AsyncSession) -> dict[str, int]:
+    """Return ``{status: row_count}`` for the ``users`` table (§S2-1.4).
+
+    One grouped ``COUNT`` instead of loading every row, so the dashboard can
+    size the audience cheaply. Statuses with no rows are absent from the map.
+    """
+    result = await session.execute(
+        select(User.status, func.count()).group_by(User.status)
+    )
+    return {str(status): int(count) for status, count in result.all()}
 
 
 def to_dict(user: User) -> dict[str, Any]:
