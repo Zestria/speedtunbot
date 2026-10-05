@@ -10,6 +10,7 @@ import secrets
 
 import pytest
 
+from app import texts
 from app.callbacks import (
     MAX_BYTES,
     TOKEN_URLSAFE_BYTES,
@@ -98,6 +99,19 @@ def test_profile_nav_new_sections_round_trip(section: str) -> None:
 def test_profile_nav_rejects_an_unknown_section() -> None:
     with pytest.raises(InvalidCallback):
         unpack("prf:nope")
+
+
+@pytest.mark.parametrize("platform", texts.INSTRUCTION_PLATFORMS)
+def test_every_instruction_platform_has_a_profile_section(platform: str) -> None:
+    """AC (S1-3.2): each picker button is a valid ``ProfileNav`` section.
+
+    The instruction catalogue (``app.texts``) and the callback namespace are
+    edited by different tasks, so they are allowed to drift apart only loudly.
+    """
+    payload = ProfileNav(section=f"instr_{platform}")
+
+    assert payload.pack() == f"prf:instr_{platform}"
+    assert unpack(payload.pack()) == payload
 
 
 def test_confirm_namespace_round_trip() -> None:

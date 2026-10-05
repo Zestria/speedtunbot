@@ -19,13 +19,14 @@ from app.handlers.broadcast import register_broadcast_handler
 from app.handlers.maintenance import register_maintenance_handler
 from app.handlers.payment import register_payment_handler
 from app.handlers.profile import register_profile_handler
-from app.handlers.start import register_start_handler
+from app.handlers.start import register_help_handler, register_start_handler
 from app.handlers.support import register_support_handler
 
 __all__ = [
     "register_all_handlers",
     "register_ban_handler",
     "register_broadcast_handler",
+    "register_help_handler",
     "register_maintenance_handler",
     "register_payment_handler",
     "register_profile_handler",
@@ -37,6 +38,7 @@ __all__ = [
 def register_all_handlers(bot: Any, container: Container) -> None:
     """Register every ported handler on ``bot`` (order does not matter)."""
     register_start_handler(bot, container)
+    register_help_handler(bot, container)
     register_profile_handler(bot, container)
     register_payment_handler(bot, container)
     register_support_handler(bot, container)

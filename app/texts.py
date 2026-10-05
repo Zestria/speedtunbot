@@ -86,6 +86,83 @@ BUTTON_PROFILE_INSTR = "📖 Инструкция"
 BUTTON_PROFILE_EXTEND = "💳 Продлить"
 BUTTON_PROFILE_NEWLINK = "🔄 Новая ссылка"
 BUTTON_PROFILE_SUPPORT = "🆘 Поддержка"
+BUTTON_PROFILE_LINK = "🔗 Показать ссылку"
+
+# --- QR screen (S1-2.2) -----------------------------------------------------
+
+#: Caption of the QR photo. ``{link}`` is replaced with the **escaped** URL —
+#: see :data:`INSTRUCTIONS` for why this is a replace and not a ``.format``.
+QR_CAPTION = (
+    "📱 <b>Подключение по QR-коду</b>\n\n"
+    "Отсканируйте в приложении:\n"
+    "<code>{link}</code>"
+)
+
+# --- link + instruction screens (S1-3) --------------------------------------
+
+PROFILE_LINK_SCREEN = (
+    "🔗 <b>Ссылка на подключение</b>\n\n"
+    "Скопируйте её в VPN-приложение:\n"
+    "<code>{link}</code>"
+)
+
+INSTR_PICKER = "📖 <b>Инструкция</b>\n\nВыберите ваше устройство:"
+
+#: Platform keys in picker order (§S1-3.1); :data:`INSTRUCTIONS`,
+#: :data:`INSTR_PLATFORM_LABELS` and the picker buttons all share this order.
+INSTRUCTION_PLATFORMS = ("android", "ios", "windows", "macos")
+
+#: Button labels of the platform picker, keyed like :data:`INSTRUCTIONS`.
+INSTR_PLATFORM_LABELS = {
+    "android": "🤖 Android",
+    "ios": "🍎 iOS",
+    "windows": "🪟 Windows",
+    "macos": "💻 macOS",
+}
+
+#: Numbered steps per platform (§S1-3.1): one cross-platform client (Hiddify)
+#: plus one alternative, 4 steps each. ``{link}`` is substituted with
+#: :meth:`str.replace` (never ``.format``) so the operator can retype the prose
+#: freely — a stray ``{`` would otherwise raise ``KeyError`` at render time and
+#: leave the button spinning.
+INSTRUCTIONS = {
+    "android": (
+        "<b>🤖 Android</b>\n\n"
+        "1. Установите <b>Hiddify</b> из Google Play.\n"
+        "Альтернатива: <b>v2rayNG</b>.\n"
+        "2. Скопируйте вашу ссылку:\n"
+        "   <code>{link}</code>\n"
+        "3. В Hiddify нажмите «+» → «Добавить из буфера обмена».\n"
+        "4. Включите переключатель VPN и разрешите подключение."
+    ),
+    "ios": (
+        "<b>🍎 iOS</b>\n\n"
+        "1. Установите <b>Hiddify</b> из App Store.\n"
+        "Альтернатива: <b>Streisand</b>.\n"
+        "2. Скопируйте вашу ссылку:\n"
+        "   <code>{link}</code>\n"
+        "3. В Hiddify нажмите «+» → «Добавить из буфера обмена».\n"
+        "4. Разрешите добавление конфигурации VPN и включите её."
+    ),
+    "windows": (
+        "<b>🪟 Windows</b>\n\n"
+        "1. Скачайте <b>Hiddify</b> с официального сайта.\n"
+        "Альтернатива: <b>Nekoray</b>.\n"
+        "2. Скопируйте вашу ссылку:\n"
+        "   <code>{link}</code>\n"
+        "3. В Hiddify нажмите «+» → «Добавить из буфера обмена».\n"
+        "4. Выберите профиль и нажмите «Подключить»."
+    ),
+    "macos": (
+        "<b>💻 macOS</b>\n\n"
+        "1. Скачайте <b>Hiddify</b> с официального сайта.\n"
+        "Альтернатива: <b>FoXray</b>.\n"
+        "2. Скопируйте вашу ссылку:\n"
+        "   <code>{link}</code>\n"
+        "3. В Hiddify нажмите «+» → «Добавить из буфера обмена».\n"
+        "4. Разрешите системное расширение VPN и включите профиль."
+    ),
+}
 
 # --- /support, /support_user (M0-09.3) -------------------------------------
 
@@ -250,3 +327,25 @@ BUTTON_PAY_CANCEL = "❌ Отмена"
 BUTTON_APPROVE = "✅ Одобрить"
 BUTTON_DECLINE = "❌ Отклонить"
 BUTTON_RETRY_APPLY = "🔁 Повторить применение"
+
+# --- main menu + /help (S1-4) -----------------------------------------------
+
+#: Body appended to every ``/start`` greeting (§S1-4.5): the menu itself is the
+#: keyboard, so this is only the line that tells the user it is there.
+START_MENU = "🏠 <b>Главное меню</b>\n\nВыберите действие:"
+
+HELP_TEXT = (
+    "ℹ️ <b>Помощь</b>\n\n"
+    "Доступные команды:\n"
+    "/start — главное меню\n"
+    "/profile — подписка, трафик и ссылка\n"
+    "/pay — оплата тарифов\n"
+    "/support — написать в поддержку"
+)
+
+BUTTON_MENU_PROFILE = "👤 Профиль"
+BUTTON_MENU_PAY = "💳 Оплата"
+#: The menu and the profile card label these two identically, so they share one
+#: constant each instead of two literals that could drift apart.
+BUTTON_MENU_INSTR = BUTTON_PROFILE_INSTR
+BUTTON_MENU_SUPPORT = BUTTON_PROFILE_SUPPORT

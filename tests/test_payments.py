@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -42,7 +43,13 @@ from app.db.models import (
 )
 from app.db.repositories import users as users_repo
 from app.errors import AlreadyProcessed, NotRegistered, PanelError
-from app.handlers.payment import pay_callback, payment_media, pending_notice
+from app.handlers.payment import (
+    pay_callback,
+    pay_command,
+    payment_media,
+    pending_notice,
+    show_tariffs,
+)
 from app.services.payments import PaymentService
 from app.services.subscriptions import MS_PER_DAY, now_ms
 from app.states import UserStates
@@ -681,3 +688,69 @@ async def test_media_in_support_state_is_routed_to_support(
 
     assert texts.PAYMENT_MEDIA_UNROUTED not in [text for _, text in fake_bot.sent]
     assert [chat for chat, _, _, _ in fake_bot.media] == [OWNER]
+
+
+# --- /pay command and the prf:pay button share one path (S1-4.1) ------------
+
+
+def command(text: str = "/pay") -> SimpleNamespace:
+    """Minimal Telegram message for a command handler."""
+    return SimpleNamespace(
+        text=text,
+        from_user=SimpleNamespace(id=USER, username="neo", first_name="Neo"),
+        chat=SimpleNamespace(id=CHAT),
+    )
+
+
+def payloads(markup: Any) -> list[str]:
+    """Return the callback payloads of an inline keyboard, row by row."""
+    return [button.callback_data for row in markup.keyboard for button in row]
+
+
+async def test_pay_command_shows_the_tariff_picker(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-4.1): ``/pay`` renders the list as a new message (no ``message_id``)."""
+    await seed_user(session_factory, USER)
+    panel_of(handler_container).seed(USER, expiry_ms=now_ms())
+    tariff = await seed_tariff(session_factory)
+
+    await pay_command(command(), fake_bot, handler_container)
+
+    (chat_id, text, kwargs) = fake_bot.messages[-1]
+    assert (chat_id, text) == (CHAT, texts.PAYMENT_CHOOSE_TARIFF)
+    assert payloads(kwargs["reply_markup"]) == [f"pay:sel:{tariff.id}"]
+    assert fake_bot.edits == []
+
+
+async def test_show_tariffs_edits_the_card_that_asked(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-4.1): the same function with ``message_id`` edits in place."""
+    await seed_user(session_factory, USER)
+    panel_of(handler_container).seed(USER, expiry_ms=now_ms())
+    tariff = await seed_tariff(session_factory)
+
+    await show_tariffs(fake_bot, CHAT, handler_container, USER, message_id=42)
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id, text) == (CHAT, 42, texts.PAYMENT_CHOOSE_TARIFF)
+    assert payloads(kwargs["reply_markup"]) == [f"pay:sel:{tariff.id}"]
+    assert fake_bot.messages == []
+
+
+async def test_show_tariffs_refuses_a_pending_user(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The approval guard survived the extraction: same refusal as ``/pay`` had."""
+    await seed_user(session_factory, USER, status=UserStatus.PENDING)
+
+    await show_tariffs(fake_bot, CHAT, handler_container, USER)
+
+    assert fake_bot.sent == [(CHAT, texts.PAYMENT_NOT_APPROVED)]

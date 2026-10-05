@@ -1,4 +1,4 @@
-"""``/profile`` — subscription dashboard (``TASK_PLAN.md`` §S1-1, fixes B4).
+"""``/profile`` — subscription dashboard and its screens (``TASK_PLAN.md`` §S1-1…§S1-3).
 
 Reads the client through :class:`~app.services.panel.PanelGateway` (never through
 ``py3xui`` directly) and renders one dashboard card with the traffic bar,
@@ -9,12 +9,21 @@ account is told to run ``/start``.
 B4 was an ``UnboundLocalError``: the legacy handler caught the panel failure but
 then used the never-assigned ``inbound`` variable. Here a failed read is turned
 into ``(None, <friendly>)`` and the handler stops.
+
+Every screen below the dashboard (QR, instructions, link) is a ``prf:`` section
+served by :func:`profile_callback`, and every one of them shares
+:func:`_resolve_target` — one panel read, one failure branch, one callback
+answer — so no navigation path can leave the spinner running (B5).
+
+The subscription link is always ``sub_url(settings, snapshot.sub_id)`` (§S1-1.6),
+i.e. the **caller's own** URL: nothing about a particular panel is hard-coded.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,14 +35,20 @@ from app.callbacks import ProfileNav, unpack
 from app.container import Container
 from app.errors import InvalidCallback, PanelError
 from app.handlers.common import alert_staff, reply
+from app.handlers.payment import show_tariffs
+from app.handlers.support import enter_support
 from app.services.panel import ClientTraffic
 from app.ui import bar, delete_if_photo, edit_or_send, fmt_bytes, fmt_left
+from app.utils.qr import make_qr_png
 from app.utils.text import esc, sub_url
 
 logger = logging.getLogger(__name__)
 
 #: Callback-data namespace owned by this handler.
 NAMESPACE = f"{ProfileNav.ns}:"
+
+#: Section prefix of a per-platform instruction screen (§S1-3.3).
+INSTR_PREFIX = "instr_"
 
 #: Dashboard states (§S1-1.9).
 STATE_ACTIVE = "active"
@@ -153,6 +168,53 @@ def profile_keyboard() -> Any:
     )
 
 
+def qr_keyboard() -> Any:
+    """Keyboard under the QR photo (§S1-2.2): one step further or back."""
+    return quick_markup(
+        {
+            texts.BUTTON_PROFILE_INSTR: {"callback_data": ProfileNav("instr").pack()},
+            texts.BUTTON_BACK: {"callback_data": ProfileNav("profile").pack()},
+        },
+        row_width=2,
+    )
+
+
+def instr_picker_keyboard() -> Any:
+    """Platform picker (§S1-3.2): one button per platform, then ``⬅️ Назад``."""
+    buttons = {
+        texts.INSTR_PLATFORM_LABELS[platform]: {
+            "callback_data": ProfileNav(f"{INSTR_PREFIX}{platform}").pack()
+        }
+        for platform in texts.INSTRUCTION_PLATFORMS
+    }
+    buttons[texts.BUTTON_BACK] = {"callback_data": ProfileNav("profile").pack()}
+    return quick_markup(buttons, row_width=2)
+
+
+def instructions_keyboard() -> Any:
+    """Keyboard under one platform's steps (§S1-3.3).
+
+    ``⬅️ Назад`` returns to the **picker** (``prf:instr``), not the dashboard:
+    the picker is the parent screen of every platform.
+    """
+    return quick_markup(
+        {
+            texts.BUTTON_PROFILE_QR: {"callback_data": ProfileNav("qr").pack()},
+            texts.BUTTON_PROFILE_LINK: {"callback_data": ProfileNav("link").pack()},
+            texts.BUTTON_BACK: {"callback_data": ProfileNav("instr").pack()},
+        },
+        row_width=2,
+    )
+
+
+def link_keyboard() -> Any:
+    """Keyboard under the link screen (§S1-3.4): just ``⬅️ Назад``."""
+    return quick_markup(
+        {texts.BUTTON_BACK: {"callback_data": ProfileNav("profile").pack()}},
+        row_width=1,
+    )
+
+
 def _expiry_line(info: ClientTraffic, now_ms: int, timezone: str) -> str | None:
     """Return the ``📅 До:`` line, or ``None`` when there is no expiry at all."""
     if info.expiry_ms == 0:
@@ -220,7 +282,7 @@ async def profile_command(message: Any, bot: Any, container: Container) -> None:
 
 
 async def profile_callback(call: Any, bot: Any, container: Container) -> None:
-    """Handle ``prf:`` callbacks — ``prf:profile`` only for now (§S1-1.12).
+    """Dispatch a ``prf:`` callback to its screen (§S1-1.12 … §S1-3.4).
 
     Every path answers the callback query, so a crafted or stale payload never
     leaves the button spinner running and never raises into the poller (B5).
@@ -230,32 +292,179 @@ async def profile_callback(call: Any, bot: Any, container: Container) -> None:
     except InvalidCallback:
         await _answer(bot, call, texts.ERROR_STALE_BUTTON)
         return
-    if not isinstance(payload, ProfileNav) or payload.section != "profile":
+    if not isinstance(payload, ProfileNav):
         await _answer(bot, call, texts.ERROR_STALE_BUTTON)
         return
 
-    tg_id = int(call.from_user.id)
-    chat_id = int(call.message.chat.id)
-    message_id = int(call.message.message_id)
+    section = payload.section
+    if section == "profile":
+        await _show_profile(call, bot, container)
+    elif section == "qr":
+        await _show_qr(call, bot, container)
+    elif section == "instr":
+        await _show_instr_picker(call, bot, container)
+    elif section == "link":
+        await _show_link(call, bot, container)
+    elif section == "pay":
+        await _show_pay(call, bot, container)
+    elif section == "support":
+        await _show_support(call, bot, container)
+    elif section.startswith(INSTR_PREFIX):
+        await _show_instructions(
+            call, bot, container, platform=section[len(INSTR_PREFIX) :]
+        )
+    else:
+        await _answer(bot, call, texts.ERROR_STALE_BUTTON)
 
-    info, error = await load_profile_info(container, tg_id)
+
+async def _show_pay(call: Any, bot: Any, container: Container) -> None:
+    """Open the tariff list from the dashboard button (§S1-4.3).
+
+    Delegates to the exact function ``/pay`` uses, with the card's
+    ``message_id``, so the list replaces the dashboard and both entry points
+    keep the same approval and panel-client guards.
+    """
+    chat_id, message_id = _target(call)
+    await show_tariffs(
+        bot, chat_id, container, int(call.from_user.id), message_id=message_id
+    )
+    await _answer(bot, call, None)
+
+
+async def _show_support(call: Any, bot: Any, container: Container) -> None:
+    """Enter the support flow from the dashboard button (§S1-4.3).
+
+    The same :func:`enter_support` ``/support`` calls — including the FSM state,
+    so a user who pressed the button can write to staff exactly as if they had
+    typed the command.
+    """
+    chat_id, message_id = _target(call)
+    await enter_support(
+        bot, chat_id, container, int(call.from_user.id), message_id=message_id
+    )
+    await _answer(bot, call, None)
+
+
+async def _show_profile(call: Any, bot: Any, container: Container) -> None:
+    """Re-render the dashboard card in place (§S1-1.12)."""
+    settings = container.settings
+
+    def build(snapshot: ClientTraffic, link: str) -> tuple[str, Any]:
+        return render_profile(
+            snapshot, _now_ms(), link=link, timezone=settings.timezone
+        )
+
+    await _reply_screen(call, bot, container, build)
+
+
+async def _show_qr(call: Any, bot: Any, container: Container) -> None:
+    """Send the subscription QR as an in-memory photo (§S1-2.2).
+
+    A photo cannot be edited into the card, so this screen is the one place that
+    sends a new message; ``delete_if_photo`` (inside :func:`_resolve_target`)
+    removes an earlier QR first, so re-pressing the button never stacks photos.
+    """
+    resolved = await _resolve_target(call, bot, container)
+    if resolved is None:
+        return
+    _, link = resolved
+    chat_id, _ = _target(call)
+    await bot.send_photo(
+        chat_id,
+        make_qr_png(link),
+        caption=texts.QR_CAPTION.replace("{link}", esc(link)),
+        reply_markup=qr_keyboard(),
+        parse_mode="HTML",
+    )
+    await _answer(bot, call, None)
+
+
+async def _show_instr_picker(call: Any, bot: Any, container: Container) -> None:
+    """Show the platform picker (§S1-3.2).
+
+    Static copy — no panel read, no link — so it works even while the panel is
+    down, and it is edited in place like every other text screen.
+    """
+    chat_id, message_id = _target(call)
     await delete_if_photo(bot, call)
-    if info is None:
-        await edit_or_send(bot, chat_id, message_id, error or texts.PROFILE_NO_ACCOUNT)
-        await _answer(bot, call, None)
-        if error is not None:
-            await alert_staff(container, "profile", error)
+    await edit_or_send(
+        bot, chat_id, message_id, texts.INSTR_PICKER, markup=instr_picker_keyboard()
+    )
+    await _answer(bot, call, None)
+
+
+async def _show_instructions(
+    call: Any, bot: Any, container: Container, *, platform: str
+) -> None:
+    """Show one platform's steps, filled with the caller's own link (§S1-3.3)."""
+    template = texts.INSTRUCTIONS.get(platform)
+    if template is None:
+        await _answer(bot, call, texts.ERROR_STALE_BUTTON)
         return
 
-    settings = container.settings
-    text, markup = render_profile(
-        info,
-        _now_ms(),
-        link=sub_url(settings, info.sub_id),
-        timezone=settings.timezone,
-    )
+    def build(_snapshot: ClientTraffic, link: str) -> tuple[str, Any]:
+        return template.replace("{link}", esc(link)), instructions_keyboard()
+
+    await _reply_screen(call, bot, container, build)
+
+
+async def _show_link(call: Any, bot: Any, container: Container) -> None:
+    """Show the subscription URL on its own screen (§S1-3.4)."""
+
+    def build(_snapshot: ClientTraffic, link: str) -> tuple[str, Any]:
+        return texts.PROFILE_LINK_SCREEN.replace("{link}", esc(link)), link_keyboard()
+
+    await _reply_screen(call, bot, container, build)
+
+
+async def _resolve_target(
+    call: Any, bot: Any, container: Container
+) -> tuple[ClientTraffic, str] | None:
+    """Read ``(snapshot, link)`` for the caller, handling every failure here.
+
+    Returns ``None`` after replying in place — the ``/start`` hint for a user
+    with no client, or the outage text plus a staff alert — so screens only ever
+    deal with the success path. The stale QR photo (if any) is deleted before
+    that reply, because editing a photo message as text would fail.
+    """
+    chat_id, message_id = _target(call)
+    snapshot, error = await load_profile_info(container, int(call.from_user.id))
+    await delete_if_photo(bot, call)
+    if snapshot is not None:
+        return snapshot, sub_url(container.settings, snapshot.sub_id)
+    await edit_or_send(bot, chat_id, message_id, error or texts.PROFILE_NO_ACCOUNT)
+    await _answer(bot, call, None)
+    if error is not None:
+        await alert_staff(container, "profile", error)
+    return None
+
+
+async def _reply_screen(
+    call: Any,
+    bot: Any,
+    container: Container,
+    build: Callable[[ClientTraffic, str], tuple[str, Any]],
+) -> None:
+    """Render a text screen in place, with ``build(snapshot, link)`` (§S1-3.2–.4).
+
+    The shared plumbing — panel read, failure branch, stale-photo cleanup,
+    ``edit_or_send`` and the callback answer — lives here so the screens cannot
+    drift apart: they only supply their copy and keyboard.
+    """
+    resolved = await _resolve_target(call, bot, container)
+    if resolved is None:
+        return
+    snapshot, link = resolved
+    chat_id, message_id = _target(call)
+    text, markup = build(snapshot, link)
     await edit_or_send(bot, chat_id, message_id, text, markup=markup)
     await _answer(bot, call, None)
+
+
+def _target(call: Any) -> tuple[int, int]:
+    """Return ``(chat_id, message_id)`` of the message the callback came from."""
+    message = call.message
+    return int(message.chat.id), int(message.message_id)
 
 
 async def _answer(bot: Any, call: Any, text: str | None) -> None:
@@ -281,12 +490,17 @@ def register_profile_handler(bot: Any, container: Container) -> None:
 
 
 __all__ = [
+    "INSTR_PREFIX",
     "NAMESPACE",
+    "instr_picker_keyboard",
+    "instructions_keyboard",
+    "link_keyboard",
     "load_profile_info",
     "profile_callback",
     "profile_command",
     "profile_keyboard",
     "profile_state",
+    "qr_keyboard",
     "register_profile_handler",
     "render_profile",
 ]

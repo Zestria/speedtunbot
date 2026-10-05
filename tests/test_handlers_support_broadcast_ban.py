@@ -29,6 +29,7 @@ from app.db.repositories import users as users_repo
 from app.handlers import broadcast
 from app.handlers.ban import ban_command, banned_list_command, unban_command
 from app.handlers.support import (
+    enter_support,
     support_command,
     support_message,
     support_relay,
@@ -139,6 +140,29 @@ async def test_support_toggles_the_waiting_state(
     await support_command(message(USER, "/support"), fake_bot, handler_container)
     assert await fake_bot.get_state(USER, CHAT) is None
     assert fake_bot.texts_to(CHAT)[-1] == texts.SUPPORT_EXITED
+
+
+async def test_enter_support_is_the_single_entry_point(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-4.2): ``enter_support`` sets the state and confirms, as /support did."""
+    await enter_support(fake_bot, CHAT, handler_container, USER)
+
+    assert await fake_bot.get_state(USER, CHAT) == UserStates.waiting_for_help.name
+    assert fake_bot.sent == [(CHAT, texts.SUPPORT_ENTERED)]
+    assert fake_bot.edits == []
+
+
+async def test_enter_support_edits_the_card_that_asked(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """The ``prf:support`` button path edits the dashboard instead of adding one."""
+    await enter_support(fake_bot, CHAT, handler_container, USER, message_id=501)
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id, text) == (CHAT, 501, texts.SUPPORT_ENTERED)
+    assert kwargs["parse_mode"] == "HTML"
+    assert fake_bot.sent == []
 
 
 async def test_support_message_is_escaped_and_fanned_out_to_staff(

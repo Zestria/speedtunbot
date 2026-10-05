@@ -26,6 +26,7 @@ from app.handlers.common import alert_staff, reply
 from app.handlers.support import support_media
 from app.permissions import Permission, check_callback
 from app.states import UserStates
+from app.ui import edit_or_send
 from app.utils.text import esc
 
 logger = logging.getLogger(__name__)
@@ -35,39 +36,56 @@ NAMESPACE = f"{Pay.ns}:"
 
 
 async def pay_command(message: Any, bot: Any, container: Container) -> None:
-    """Show the active tariffs and let the user pick one (§M0-10.7).
+    """``/pay`` — show the active tariffs (§M0-10.7)."""
+    await show_tariffs(
+        bot,
+        int(message.chat.id),
+        container,
+        int(message.from_user.id),
+    )
 
-    Requires an **approved** user with a panel client: a stranger or a pending
-    account is refused gracefully instead of creating a dangling payment.
+
+async def show_tariffs(
+    bot: Any,
+    chat_id: int,
+    container: Container,
+    tg_id: int,
+    *,
+    message_id: int | None = None,
+) -> None:
+    """Show the active tariffs and let the user pick one (§M0-10.7, §S1-4.1).
+
+    The single path behind both ``/pay`` and the ``prf:pay`` button: the button
+    passes the card's ``message_id`` so the list replaces the dashboard, the
+    command passes ``None`` so the list is a new message. Requires an
+    **approved** user with a panel client: a stranger or a pending account is
+    refused gracefully instead of creating a dangling payment.
     """
-    tg_id = int(message.from_user.id)
-    chat_id = int(message.chat.id)
-
     users = container.users
     panel = container.panel
     if users is None or panel is None:
-        await reply(bot, chat_id, texts.ERROR_GENERIC)
+        await edit_or_send(bot, chat_id, message_id, texts.ERROR_GENERIC)
         return
 
     if await users.status(tg_id) != UserStatus.APPROVED:
-        await reply(bot, chat_id, texts.PAYMENT_NOT_APPROVED)
+        await edit_or_send(bot, chat_id, message_id, texts.PAYMENT_NOT_APPROVED)
         return
 
     try:
         client = await panel.get_client(tg_id)
     except PanelError as exc:
         logger.warning("panel failure in /pay for %s: %s", tg_id, exc)
-        await reply(bot, chat_id, texts.PAYMENT_UNAVAILABLE)
+        await edit_or_send(bot, chat_id, message_id, texts.PAYMENT_UNAVAILABLE)
         await alert_staff(container, "pay", exc)
         return
 
     if client is None:
-        await reply(bot, chat_id, texts.PAYMENT_NO_CLIENT)
+        await edit_or_send(bot, chat_id, message_id, texts.PAYMENT_NO_CLIENT)
         return
 
     tariffs = await _active_tariffs(container)
     if not tariffs:
-        await reply(bot, chat_id, texts.PAYMENT_NO_TARIFFS)
+        await edit_or_send(bot, chat_id, message_id, texts.PAYMENT_NO_TARIFFS)
         return
 
     markup = quick_markup(
@@ -79,12 +97,12 @@ async def pay_command(message: Any, bot: Any, container: Container) -> None:
         },
         row_width=1,
     )
-    await reply(
+    await edit_or_send(
         bot,
         chat_id,
+        message_id,
         texts.PAYMENT_CHOOSE_TARIFF,
-        reply_markup=markup,
-        parse_mode="HTML",
+        markup=markup,
     )
 
 

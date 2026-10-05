@@ -21,6 +21,7 @@ from app.container import Container
 from app.handlers.common import parse_target, reply
 from app.permissions import Permission, require, staff_with
 from app.states import UserStates
+from app.ui import edit_or_send
 from app.utils.text import esc
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,28 @@ def _who(message: Any) -> str:
     return f"ID: {int(from_user.id)}"
 
 
+async def enter_support(
+    bot: Any,
+    chat_id: int,
+    container: Container,
+    tg_id: int,
+    *,
+    message_id: int | None = None,
+) -> None:
+    """Enter the "waiting for help" state and confirm it (§S1-4.2).
+
+    The single entry point behind both ``/support`` and the ``prf:support``
+    button: the button passes the card's ``message_id`` so the confirmation
+    replaces the dashboard, the command passes ``None`` for a fresh message.
+
+    ``container`` is unused today and kept for the handler-shaped signature
+    every other shared entry point has (``show_tariffs`` needs it, and this one
+    grows an audit hook in S1-5).
+    """
+    await bot.set_state(tg_id, UserStates.waiting_for_help, chat_id)
+    await edit_or_send(bot, chat_id, message_id, texts.SUPPORT_ENTERED)
+
+
 async def support_command(message: Any, bot: Any, container: Container) -> None:
     """Toggle the "waiting for help" state for a user."""
     tg_id = int(message.from_user.id)
@@ -45,8 +68,7 @@ async def support_command(message: Any, bot: Any, container: Container) -> None:
         await reply(bot, chat_id, texts.SUPPORT_EXITED)
         return
 
-    await bot.set_state(tg_id, UserStates.waiting_for_help, chat_id)
-    await reply(bot, chat_id, texts.SUPPORT_ENTERED, parse_mode="HTML")
+    await enter_support(bot, chat_id, container, tg_id)
 
 
 async def support_message(message: Any, bot: Any, container: Container) -> None:
@@ -166,6 +188,7 @@ def register_support_handler(bot: Any, container: Container) -> None:
 
 
 __all__ = [
+    "enter_support",
     "register_support_handler",
     "support_command",
     "support_media",

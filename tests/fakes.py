@@ -269,8 +269,10 @@ class FakeBot:
         self.edits: list[tuple[int, int, str, dict[str, Any]]] = []
         #: ``(chat_id, message_id)`` for every ``delete_message`` call.
         self.deleted: list[tuple[int, int]] = []
-        #: ``(chat_id, kind, file_id, kwargs)`` for ``send_photo``/``send_document``.
-        self.media: list[tuple[int, str, str, dict[str, Any]]] = []
+        #: ``(chat_id, kind, file, kwargs)`` for ``send_photo``/``send_document``.
+        #: ``file`` is the object the handler passed (a ``str`` file id **or** a
+        #: ``BytesIO``), so tests can assert on in-memory uploads too.
+        self.media: list[tuple[int, str, Any, dict[str, Any]]] = []
         #: Raise ``RuntimeError`` on every edit (exercises the send fallback).
         self.fail_edit = False
         self._edited: dict[tuple[int, int], str] = {}
@@ -322,16 +324,16 @@ class FakeBot:
     # --- media (receipts / support attachments) ----------------------------
 
     async def send_photo(
-        self, chat_id: int, photo: str, **kwargs: object
+        self, chat_id: int, photo: Any, **kwargs: object
     ) -> FakeMessage:
-        self.media.append((int(chat_id), "photo", str(photo), dict(kwargs)))
+        self.media.append((int(chat_id), "photo", photo, dict(kwargs)))
         self._next_message_id += 1
         return FakeMessage(self._next_message_id)
 
     async def send_document(
-        self, chat_id: int, document: str, **kwargs: object
+        self, chat_id: int, document: Any, **kwargs: object
     ) -> FakeMessage:
-        self.media.append((int(chat_id), "document", str(document), dict(kwargs)))
+        self.media.append((int(chat_id), "document", document, dict(kwargs)))
         self._next_message_id += 1
         return FakeMessage(self._next_message_id)
 

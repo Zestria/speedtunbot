@@ -11,7 +11,9 @@ Covers the two acceptance criteria from §M0-09 plus the defects they fix:
 
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -19,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import texts
 from app.callbacks import ProfileNav, unpack
 from app.container import Container
-from app.db.models import UserStatus
+from app.db.models import Tariff, UserStatus
 from app.db.repositories import users as users_repo
 from app.handlers.profile import (
     STATE_ACTIVE,
@@ -28,6 +30,7 @@ from app.handlers.profile import (
     STATE_NOT_ACTIVATED,
     STATE_SUSPENDED,
     STATE_UNLIMITED,
+    _show_instructions,
     load_profile_info,
     profile_callback,
     profile_command,
@@ -35,8 +38,9 @@ from app.handlers.profile import (
     profile_state,
     render_profile,
 )
-from app.handlers.start import start_command
+from app.handlers.start import help_command, start_command
 from app.services.panel import ClientTraffic
+from app.states import UserStates
 from tests.fakes import FakeBot, FakePanel
 
 USER = 555
@@ -90,7 +94,7 @@ async def test_start_creates_approved_row_and_panel_client(
 
     assert await get_status(session_factory, USER) == UserStatus.APPROVED
     assert await panel.get_client(USER) is not None
-    assert fake_bot.texts_to(99) == [texts.START_WELCOME]
+    assert fake_bot.texts_to(99) == [f"{texts.START_WELCOME}\n\n{texts.START_MENU}"]
 
 
 async def test_start_welcomes_back_an_existing_client(
@@ -106,7 +110,7 @@ async def test_start_welcomes_back_an_existing_client(
 
     await start_command(message(USER), fake_bot, handler_container)
 
-    assert fake_bot.texts_to(99) == [texts.START_RETURNING]
+    assert fake_bot.texts_to(99) == [f"{texts.START_RETURNING}\n\n{texts.START_MENU}"]
     assert "ensure_client" not in panel.calls
 
 
@@ -430,11 +434,17 @@ async def test_profile_callback_removes_a_qr_photo_first(
     assert fake_bot.callback_answers[-1][0] == "cb-500"
 
 
-@pytest.mark.parametrize("data", ["prf:nope", "prf:qr", "pay:sel:1", "bogus"])
+@pytest.mark.parametrize(
+    "data", ["prf:nope", "prf:instr_bsd", "prf:vpn", "pay:sel:1", "bogus"]
+)
 async def test_profile_callback_answers_a_crafted_payload(
     handler_container: Container, fake_bot: FakeBot, data: str
 ) -> None:
-    """AC: a crafted payload never raises and is always answered (B5)."""
+    """AC: a crafted payload never raises and is always answered (B5).
+
+    ``prf:instr_bsd`` is the unknown-platform case of §S1-3.3: the section is not
+    in :class:`~app.callbacks.ProfileNav`, so the same stale toast comes back.
+    """
     await profile_callback(callback(data), fake_bot, handler_container)
 
     assert fake_bot.callback_answers == [("cb-500", texts.ERROR_STALE_BUTTON, False)]
@@ -449,3 +459,290 @@ async def test_profile_callback_handles_a_missing_client(
 
     assert fake_bot.edits[-1][2] == texts.PROFILE_NO_ACCOUNT
     assert fake_bot.callback_answers[-1][0] == "cb-500"
+
+
+# --- QR, instruction and link screens (S1-2, S1-3) --------------------------
+
+SUB_URL = "https://panel.example.com/sub/abc"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def seeded(container: Container) -> None:
+    """Seed ``USER`` with the fixed ``sub_id`` these screens render."""
+    panel = container.panel
+    assert isinstance(panel, FakePanel)
+    panel.seed(USER, expiry_ms=0, enable=True, sub_id="abc")
+
+
+def payloads_of(markup: Any) -> list[str]:
+    """Return the callback payloads of an inline keyboard, row by row."""
+    return [button.callback_data for row in markup.keyboard for button in row]
+
+
+async def test_qr_screen_uploads_an_in_memory_png(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-2.2): ``prf:qr`` sends a ``BytesIO``; nothing is written to disk."""
+    seeded(handler_container)
+
+    await profile_callback(
+        callback("prf:qr", message_id=501), fake_bot, handler_container
+    )
+
+    (chat_id, kind, photo, kwargs) = fake_bot.media[-1]
+    assert (chat_id, kind) == (99, "photo")
+    assert isinstance(photo, BytesIO)
+    assert photo.read(8) == PNG_SIGNATURE
+    assert SUB_URL in str(kwargs["caption"])
+    assert kwargs["parse_mode"] == "HTML"
+    assert payloads_of(kwargs["reply_markup"]) == ["prf:instr", "prf:profile"]
+    assert fake_bot.callback_answers[-1][0] == "cb-501"
+
+
+async def test_qr_screen_replaces_a_previous_qr_photo(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """Re-pressing 📱 from a QR photo deletes it instead of stacking photos."""
+    seeded(handler_container)
+
+    await profile_callback(
+        callback("prf:qr", message_id=602, photo=[{"file_id": "x"}]),
+        fake_bot,
+        handler_container,
+    )
+
+    assert fake_bot.deleted == [(99, 602)]
+    assert fake_bot.edits == []
+
+
+async def test_instr_picker_lists_every_platform_without_a_url(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-3.2, S1-3.5): the picker edits in place and shows no link."""
+    await profile_callback(
+        callback("prf:instr", message_id=501), fake_bot, handler_container
+    )
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id) == (99, 501)
+    assert text == texts.INSTR_PICKER
+    assert "http" not in text
+    assert payloads_of(kwargs["reply_markup"]) == [
+        "prf:instr_android",
+        "prf:instr_ios",
+        "prf:instr_windows",
+        "prf:instr_macos",
+        "prf:profile",
+    ]
+    assert fake_bot.sent == []
+
+
+@pytest.mark.parametrize("platform", texts.INSTRUCTION_PLATFORMS)
+async def test_instruction_screen_uses_the_callers_own_link(
+    handler_container: Container, fake_bot: FakeBot, platform: str
+) -> None:
+    """AC (S1-3.3): every platform renders the caller's URL, never a literal one."""
+    seeded(handler_container)
+
+    await profile_callback(
+        callback(f"prf:instr_{platform}", message_id=501), fake_bot, handler_container
+    )
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id) == (99, 501)
+    assert f"<code>{SUB_URL}</code>" in text
+    assert "{link}" not in text
+    assert "<b>Hiddify</b>" in text
+    # ⬅️ Назад returns to the picker, not to the dashboard (S1-3.3).
+    assert payloads_of(kwargs["reply_markup"]) == ["prf:qr", "prf:link", "prf:instr"]
+    assert fake_bot.sent == []
+
+
+async def test_instruction_navigation_round_trip(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-3.5): dashboard → picker → Android → ⬅️ Назад → picker again."""
+    seeded(handler_container)
+
+    await profile_callback(
+        callback("prf:instr", message_id=501), fake_bot, handler_container
+    )
+    await profile_callback(
+        callback("prf:instr_android", message_id=501), fake_bot, handler_container
+    )
+    back = payloads_of(fake_bot.edits[-1][3]["reply_markup"])[-1]
+    await profile_callback(callback(back, message_id=501), fake_bot, handler_container)
+
+    assert back == "prf:instr"
+    assert fake_bot.edits[-1][2] == texts.INSTR_PICKER
+
+
+async def test_link_screen_shows_the_callers_own_url(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-3.4): ``prf:link`` edits the same message; back goes to the card."""
+    seeded(handler_container)
+
+    await profile_callback(
+        callback("prf:link", message_id=501), fake_bot, handler_container
+    )
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id) == (99, 501)
+    assert f"<code>{SUB_URL}</code>" in text
+    assert payloads_of(kwargs["reply_markup"]) == ["prf:profile"]
+    assert fake_bot.sent == []
+
+
+async def test_instruction_screen_without_a_client_points_at_start(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """A screen reached by a user without a client edits in the ``/start`` hint."""
+    await profile_callback(
+        callback("prf:instr_ios", message_id=501), fake_bot, handler_container
+    )
+
+    assert fake_bot.edits[-1][2] == texts.PROFILE_NO_ACCOUNT
+    assert fake_bot.media == []
+
+
+async def test_show_instructions_rejects_an_unknown_platform(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-3.3): a platform outside the catalogue is a stale toast, not a crash."""
+    await _show_instructions(
+        callback("prf:instr_bsd"), fake_bot, handler_container, platform="bsd"
+    )
+
+    assert fake_bot.callback_answers == [("cb-500", texts.ERROR_STALE_BUTTON, False)]
+    assert fake_bot.edits == []
+
+
+# --- main menu + /help (S1-4) -----------------------------------------------
+
+#: The main menu rows: profile/pay then instr/support (§S1-4.5).
+MENU_PAYLOADS = ["prf:profile", "prf:pay", "prf:instr", "prf:support"]
+
+
+async def seed_tariff(factory: async_sessionmaker[AsyncSession]) -> Tariff:
+    """Insert one active tariff (the 💳 flow needs a list to render)."""
+    async with factory() as session:
+        tariff = Tariff(
+            name="30 дней — 150 ₽", days=30, price=150, is_active=True, sort_order=1
+        )
+        session.add(tariff)
+        await session.commit()
+        await session.refresh(tariff)
+        return tariff
+
+
+def menu_of(fake_bot: FakeBot) -> list[str]:
+    """Return the payloads of the keyboard on the last message the bot sent."""
+    (_, _, kwargs) = fake_bot.messages[-1]
+    return payloads_of(kwargs["reply_markup"])
+
+
+async def test_start_shows_the_main_menu(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-4.5): the welcome keeps its copy and gains the inline menu."""
+    await start_command(message(USER), fake_bot, handler_container)
+
+    (_, text, kwargs) = fake_bot.messages[-1]
+    assert text.startswith(texts.START_WELCOME)
+    assert text.endswith(texts.START_MENU)
+    assert kwargs["parse_mode"] == "HTML"
+    assert payloads_of(kwargs["reply_markup"]) == MENU_PAYLOADS
+
+
+async def test_start_keeps_the_returning_copy_and_the_menu(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-4.5): "с возвращением" is preserved, the menu is added to it."""
+    seeded(handler_container)
+    await seed_user(session_factory, USER)
+
+    await start_command(message(USER), fake_bot, handler_container)
+
+    assert fake_bot.texts_to(99) == [f"{texts.START_RETURNING}\n\n{texts.START_MENU}"]
+    assert menu_of(fake_bot) == MENU_PAYLOADS
+
+
+async def test_help_shows_the_same_menu_as_start(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-4.6): ``/help`` shows the reference and the identical keyboard."""
+    await start_command(message(USER), fake_bot, handler_container)
+    start_menu = payloads_of(fake_bot.messages[-1][2]["reply_markup"])
+
+    await help_command(message(USER), fake_bot, handler_container)
+
+    (_, text, kwargs) = fake_bot.messages[-1]
+    assert text == texts.HELP_TEXT
+    assert "/support" in text
+    assert payloads_of(kwargs["reply_markup"]) == start_menu == MENU_PAYLOADS
+
+
+async def test_menu_buttons_reach_their_flows(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-4.7): every menu button opens the same flow as its command."""
+    seeded(handler_container)
+    await seed_user(session_factory, USER)
+    tariff = await seed_tariff(session_factory)
+
+    await start_command(message(USER), fake_bot, handler_container)
+    (profile, pay, instr, support) = menu_of(fake_bot)
+
+    # 👤 Профиль → the dashboard card (S1-1).
+    await profile_callback(
+        callback(profile, message_id=501), fake_bot, handler_container
+    )
+    assert fake_bot.edits[-1][:2] == (99, 501)
+    assert texts.PROFILE_TITLE in fake_bot.edits[-1][2]
+
+    # 💳 Оплата → the tariff list ``/pay`` renders, in the dashboard's message.
+    await profile_callback(callback(pay, message_id=501), fake_bot, handler_container)
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id, text) == (99, 501, texts.PAYMENT_CHOOSE_TARIFF)
+    assert payloads_of(kwargs["reply_markup"]) == [f"pay:sel:{tariff.id}"]
+
+    # 📖 Инструкция → the platform picker (S1-3).
+    await profile_callback(callback(instr, message_id=501), fake_bot, handler_container)
+    assert fake_bot.edits[-1][2] == texts.INSTR_PICKER
+
+    # 🆘 Поддержка → the ``/support`` state, so the next message reaches staff.
+    await profile_callback(
+        callback(support, message_id=501), fake_bot, handler_container
+    )
+    assert fake_bot.edits[-1][2] == texts.SUPPORT_ENTERED
+    assert await fake_bot.get_state(USER, 99) == UserStates.waiting_for_help.name
+
+    # Every button answered its own callback (no spinner left running).
+    assert [answer[0] for answer in fake_bot.callback_answers] == [
+        "cb-501",
+        "cb-501",
+        "cb-501",
+        "cb-501",
+    ]
+
+
+async def test_menu_pay_button_refuses_a_pending_user(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The button keeps the ``/pay`` guard: a pending account is refused."""
+    seeded(handler_container)
+    await seed_user(session_factory, USER, status=UserStatus.PENDING)
+
+    await profile_callback(
+        callback("prf:pay", message_id=501), fake_bot, handler_container
+    )
+
+    assert fake_bot.edits[-1][2] == texts.PAYMENT_NOT_APPROVED
+    assert fake_bot.callback_answers[-1] == ("cb-501", None, False)

@@ -6,6 +6,7 @@ HTML guard every user-controlled fragment passes through.
 
 from __future__ import annotations
 
+from app import texts
 from app.settings import Settings
 from app.utils.text import esc, sub_url
 
@@ -23,3 +24,46 @@ def test_sub_url_follows_the_configured_base(settings: Settings) -> None:
 
 def test_esc_escapes_the_html_metacharacters() -> None:
     assert esc("a & b < c > d") == "a &amp; b &lt; c &gt; d"
+
+
+# --- instruction catalogue (S1-3.1) -----------------------------------------
+
+
+def test_instruction_platforms_agree_across_the_catalogue() -> None:
+    """AC (S1-3.1): the four platforms line up in keys, labels and order."""
+    assert texts.INSTRUCTION_PLATFORMS == ("android", "ios", "windows", "macos")
+    assert set(texts.INSTRUCTIONS) == set(texts.INSTRUCTION_PLATFORMS)
+    assert set(texts.INSTR_PLATFORM_LABELS) == set(texts.INSTRUCTION_PLATFORMS)
+
+
+def test_every_instruction_template_is_filled_from_the_users_link() -> None:
+    """AC (S1-3.1, S1-3.5): a template, never a hard-coded URL."""
+    for platform, template in texts.INSTRUCTIONS.items():
+        steps = [line for line in template.splitlines() if line[:1].isdigit()]
+        assert "{link}" in template, platform
+        assert "http" not in template, platform
+        assert 3 <= len(steps) <= 5, platform
+
+
+# --- main menu labels (S1-4.4) ----------------------------------------------
+
+
+def test_menu_labels_are_distinct_and_shared_with_the_profile_card() -> None:
+    """AC (S1-4.4): four distinct labels, two of them the dashboard's own."""
+    labels = (
+        texts.BUTTON_MENU_PROFILE,
+        texts.BUTTON_MENU_PAY,
+        texts.BUTTON_MENU_INSTR,
+        texts.BUTTON_MENU_SUPPORT,
+    )
+    assert len(set(labels)) == 4
+    # Shared by identity, so the menu and the card cannot drift apart.
+    assert texts.BUTTON_MENU_INSTR is texts.BUTTON_PROFILE_INSTR
+    assert texts.BUTTON_MENU_SUPPORT is texts.BUTTON_PROFILE_SUPPORT
+
+
+def test_menu_texts_point_at_the_menu_itself_and_the_commands() -> None:
+    """AC (S1-4.4): the menu card and /help are plain text, no link expected."""
+    assert texts.START_MENU
+    for name in ("/start", "/profile", "/pay", "/support"):
+        assert name in texts.HELP_TEXT
