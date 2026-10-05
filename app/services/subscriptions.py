@@ -39,41 +39,26 @@ def is_unlimited(expiry_ms: int | None, enabled: bool) -> bool:
     return int(expiry_ms) == 0 and bool(enabled)
 
 
-def base_expiry_ms(expiry_ms: int | None, enabled: bool, now: int) -> int:
-    """Normalise a panel expiry for :func:`calculate_expiry_ms`.
-
-    An unset expiry on a **disabled** client (never activated) counts from
-    ``now``, so extending it produces a finite date instead of a perpetual
-    (``0``) one; ``0`` on an enabled client stays ``0``. An unknown (``None``)
-    expiry also counts from ``now``.
-    """
-    if expiry_ms is None:
-        return int(now)
-    value = int(expiry_ms)
-    if value == 0 and not enabled:
-        return int(now)
-    return value
-
-
-def calculate_expiry_ms(old_ms: int | None, days: int, now_ms: int) -> int:
+def calculate_expiry_ms(
+    old_ms: int | None, days: int, now_ms: int, enabled: bool
+) -> int:
     """Return the new expiry timestamp (epoch ms) after adding ``days``.
 
-    * ``old_ms`` is ``None`` (or negative, the panel's "start on first use"
-      marker) → ``now_ms + days`` (a delayed start begins counting from now);
-    * ``old_ms`` is ``0`` → ``0`` (perpetual: never modified);
-    * ``old_ms`` is in the future → extend from the future date;
-    * ``old_ms`` is in the past (expired) → extend from ``now_ms``.
-
-    Callers that read the value straight off a panel client must run it through
-    :func:`base_expiry_ms` first, so a disabled placeholder (``0`` with
-    ``enable=False``) counts from ``now``.
+    * ``old_ms == 0`` **and** ``enabled`` → ``0``: a genuinely perpetual client
+      is never modified;
+    * ``old_ms == 0`` **and** disabled, ``old_ms`` negative (the panel's "start
+      on first use" marker), or ``None`` → ``now_ms + days``: a never-activated
+      legacy placeholder begins counting now instead of becoming perpetual;
+    * ``old_ms > 0`` → extend from the later of ``old_ms``/``now_ms`` (a future
+      date is extended, an expired one restarts from ``now_ms``).
     """
     delta = int(days) * MS_PER_DAY
-    if old_ms is None or old_ms < 0:
-        return now_ms + delta
-    if old_ms == 0:
-        return 0
-    return max(old_ms, now_ms) + delta
+    if old_ms is None or int(old_ms) < 0:
+        return int(now_ms) + delta
+    value = int(old_ms)
+    if value == 0:
+        return 0 if enabled else int(now_ms) + delta
+    return max(value, int(now_ms)) + delta
 
 
 def now_ms() -> int:
@@ -107,10 +92,11 @@ class SubscriptionService:
         expected: dict[str, int] = {}
 
         def apply(client: Client) -> bool:
-            if is_unlimited(client.expiry_time, bool(client.enable)):
-                return False  # perpetual — leave untouched
-            base_ms = base_expiry_ms(client.expiry_time, bool(client.enable), now_ms())
-            ms = calculate_expiry_ms(base_ms, days, now_ms())
+            enabled = bool(client.enable)
+            ms = calculate_expiry_ms(client.expiry_time, days, now_ms(), enabled)
+            if ms == 0:
+                # ``0`` + ``enabled`` is perpetual — leave it untouched.
+                return False
             expected["ms"] = ms
             client.expiry_time = ms
             return True

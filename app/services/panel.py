@@ -35,6 +35,14 @@ CACHE_TTL = 30.0
 SUB_ID_LENGTH = 16
 SUB_ID_ALPHABET = string.ascii_lowercase + string.digits
 
+BYTES_PER_GB = 1024**3
+
+# The panel's ``totalGB`` field is measured in **bytes** despite its name
+# (S0-2; the unit is unverified until a live smoke run, see
+# ``docs/panel_api_notes.md``). This is the single knob to flip to
+# ``BYTES_PER_GB`` if the smoke run proves the panel really stores gigabytes.
+PANEL_TOTAL_UNIT_BYTES = 1
+
 # Transport-level failures (never a domain error) mapped to PanelUnavailable.
 _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
     httpx.HTTPError,
@@ -45,7 +53,7 @@ _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 
 @dataclass(frozen=True)
 class ClientTraffic:
-    """Traffic snapshot for one panel client (read from the inbound copy)."""
+    """Traffic snapshot for one panel client (stats merged with settings)."""
 
     email: str
     up: int
@@ -54,6 +62,7 @@ class ClientTraffic:
     expiry_ms: int
     enable: bool
     sub_id: str
+    last_online_ms: int | None = None
 
     @property
     def used(self) -> int:
@@ -61,9 +70,42 @@ class ClientTraffic:
         return self.up + self.down
 
 
+@dataclass(frozen=True)
+class _InboundSnapshot:
+    """One inbound read: ``settings.clients`` plus per-client traffic stats."""
+
+    clients: dict[str, Client]
+    stats: dict[str, Client]
+
+
 def new_sub_id() -> str:
     """Return a fresh 16-char ``[a-z0-9]`` subscription id (§2.7)."""
     return "".join(random.choices(SUB_ID_ALPHABET, k=SUB_ID_LENGTH))
+
+
+def gb_to_bytes(gb: int | None) -> int:
+    """Convert a GB quota into bytes (``None`` = unlimited → ``0``)."""
+    if gb is None:
+        return 0
+    return max(0, int(gb)) * BYTES_PER_GB
+
+
+def _to_panel_total(total_bytes: int) -> int:
+    """Express ``total_bytes`` in the unit the panel stores in ``totalGB``."""
+    return max(0, int(total_bytes)) // PANEL_TOTAL_UNIT_BYTES
+
+
+def _last_online_ms(stats: Client) -> int | None:
+    """Best-effort ``last_online`` (epoch ms) from a stats entry, else ``None``.
+
+    ``py3xui`` drops panel fields it does not model, so this returns ``None``
+    whenever the deployed panel does not expose a last-online value (S0-2.3).
+    """
+    for attr in ("last_online", "lastOnline", "last_online_ms"):
+        value = getattr(stats, attr, None)
+        if value:
+            return int(value)
+    return None
 
 
 class PanelGateway:
@@ -89,6 +131,9 @@ class PanelGateway:
         # One global lock serialises every read-modify-write (lost-update race).
         self._lock = asyncio.Lock()
         self._clients: dict[str, Client] | None = None
+        #: Per-client traffic stats (``inbound.client_stats``), keyed by email,
+        #: refreshed together with ``_clients`` (S0-2.3).
+        self._stats: dict[str, Client] = {}
         self._cache_at = 0.0
 
     # --- internals ---------------------------------------------------------
@@ -102,19 +147,31 @@ class PanelGateway:
         except _TRANSPORT_ERRORS as exc:
             raise PanelUnavailable(f"panel request failed: {exc}") from exc
 
-    async def _read_clients(self) -> dict[str, Client]:
-        """Fetch the inbound once and build an ``{email: Client}`` index."""
+    @staticmethod
+    def _by_email(entries: Any) -> dict[str, Client]:
+        """Index a list of panel clients by their ``email``."""
+        index: dict[str, Client] = {}
+        for entry in entries or []:
+            email = getattr(entry, "email", None)
+            if email:
+                index[str(email)] = entry
+        return index
+
+    async def _read_snapshot(self) -> _InboundSnapshot:
+        """Fetch the inbound once: settings clients + per-client traffic stats.
+
+        Live ``up``/``down``/``last_online`` live in ``inbound.client_stats``;
+        the quota, expiry and enable flag live in ``inbound.settings.clients``
+        (S0-2.3, ``docs/panel_api_notes.md``).
+        """
         inbound = await self._call(
             lambda: self._api.inbound.get_by_id(self._inbound_id)
         )
         settings = getattr(inbound, "settings", None)
-        clients = getattr(settings, "clients", None) or []
-        index: dict[str, Client] = {}
-        for client in clients:
-            email = getattr(client, "email", None)
-            if email:
-                index[str(email)] = client
-        return index
+        return _InboundSnapshot(
+            clients=self._by_email(getattr(settings, "clients", None)),
+            stats=self._by_email(getattr(inbound, "client_stats", None)),
+        )
 
     async def _index(self, *, bypass_cache: bool = False) -> dict[str, Client]:
         """Return the cached index, refreshing it after :data:`CACHE_TTL`."""
@@ -125,14 +182,16 @@ class PanelGateway:
         )
         if fresh:
             return self._clients  # type: ignore[return-value]
-        index = await self._read_clients()
-        self._clients = index
+        snapshot = await self._read_snapshot()
+        self._clients = snapshot.clients
+        self._stats = snapshot.stats
         self._cache_at = time.monotonic()
-        return index
+        return self._clients
 
     def _invalidate(self) -> None:
         """Drop the cached index (called after every write)."""
         self._clients = None
+        self._stats = {}
         self._cache_at = 0.0
 
     async def _require_client(
@@ -161,18 +220,27 @@ class PanelGateway:
         return list((await self._index()).values())
 
     async def get_traffic(self, tg_id: int) -> ClientTraffic | None:
-        """Return the traffic snapshot for ``tg_id`` or ``None``."""
-        client = await self.get_client(tg_id)
+        """Return the merged traffic snapshot for ``tg_id`` or ``None``.
+
+        ``up``/``down``/``last_online`` come from ``inbound.client_stats`` when
+        the panel reports them; the quota, expiry and enable flag come from the
+        settings client. With no stats entry the settings client is used as-is
+        (S0-2.3).
+        """
+        index = await self._index()
+        client = index.get(str(tg_id))
         if client is None:
             return None
+        stats = self._stats.get(str(tg_id))
         return ClientTraffic(
             email=str(client.email),
-            up=int(client.up),
-            down=int(client.down),
+            up=int(stats.up) if stats is not None else int(client.up),
+            down=int(stats.down) if stats is not None else int(client.down),
             total=int(client.total),
             expiry_ms=int(client.expiry_time),
             enable=bool(client.enable),
             sub_id=client.sub_id or "",
+            last_online_ms=_last_online_ms(stats) if stats is not None else None,
         )
 
     async def server_status(self) -> dict[str, Any]:
@@ -246,38 +314,76 @@ class PanelGateway:
         )
 
     async def set_limits(
-        self, tg_id: int, total_gb: int | None = None, limit_ip: int | None = None
+        self, tg_id: int, total_bytes: int | None = None, limit_ip: int | None = None
     ) -> Client:
-        """Set traffic quota (GB) and/or IP limit; ``None`` means unlimited."""
-        gb = 0 if total_gb is None else max(0, int(total_gb))
+        """Set the traffic quota (in **bytes**) and/or IP limit.
+
+        ``None`` means unlimited for either field. The quota is converted into
+        the unit the panel stores in ``totalGB`` (bytes, see
+        :data:`PANEL_TOTAL_UNIT_BYTES`) — no caller passes raw GB (S0-2.4).
+        """
+        total = _to_panel_total(0 if total_bytes is None else total_bytes)
         ips = 0 if limit_ip is None else max(0, int(limit_ip))
 
         def apply(client: Client) -> bool:
-            client.total_gb = gb
+            client.total_gb = total
             client.limit_ip = ips
             return True
 
         return await self.mutate(
             tg_id,
             apply,
-            lambda c: int(c.total_gb) == gb and int(c.limit_ip) == ips,
-            desc=f"limits(total_gb={gb}, limit_ip={ips})",
+            lambda c: int(c.total_gb) == total and int(c.limit_ip) == ips,
+            desc=f"limits(total_bytes={total_bytes}, limit_ip={ips})",
         )
 
     async def reset_traffic(self, tg_id: int) -> Client:
-        """Zero the counters (``up``/``down``); the total stays untouched."""
+        """Zero one client's counters via the panel's dedicated reset route.
 
-        def apply(client: Client) -> bool:
-            client.up = 0
-            client.down = 0
-            return True
+        Prefers ``py3xui``'s ``client.reset_stats``; falls back to a raw
+        ``POST /panel/api/inbounds/{id}/resetClientTraffic/{email}`` when the
+        wrapper is absent (S0-2.5). The reset runs under the write lock and is
+        verified by re-reading the stats (``up == down == 0``).
+        """
+        email = str(tg_id)
+        async with self._lock:
+            await self._require_client(tg_id, bypass_cache=True)
+            await self._reset_stats(email)
+            self._invalidate()
+            index = await self._index(bypass_cache=True)
+        client = index.get(email)
+        if client is None:
+            raise ClientNotFound(str(tg_id))
+        stats = self._stats.get(email)
+        up = int(stats.up) if stats is not None else int(client.up)
+        down = int(stats.down) if stats is not None else int(client.down)
+        if up != 0 or down != 0:
+            raise PanelError(f"panel did not reset traffic for client {tg_id}")
+        return client
 
-        return await self.mutate(
-            tg_id,
-            apply,
-            lambda c: int(c.up) == 0 and int(c.down) == 0,
-            desc="traffic reset",
-        )
+    async def _reset_stats(self, email: str) -> None:
+        """Reset ``email``'s counters (py3xui wrapper, else the raw route)."""
+        reset = getattr(self._api.client, "reset_stats", None)
+        if callable(reset):
+            await self._call(lambda: reset(self._inbound_id, email))
+            return
+        await self._call(lambda: self._reset_stats_raw(email))
+
+    async def _reset_stats_raw(self, email: str) -> None:
+        """Raw fallback: ``POST …/resetClientTraffic/{email}`` with the token.
+
+        The URL is built from ``settings.domain`` exactly, so a panel deployed
+        behind a base path keeps it (``docs/panel_api_notes.md`` §1).
+        """
+        base = self._settings.domain.rstrip("/")
+        url = f"{base}/panel/api/inbounds/{self._inbound_id}/resetClientTraffic/{email}"
+        headers = {
+            "Authorization": f"Bearer {self._settings.vpn_token}",
+            "Accept": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as http:
+            response = await http.post(url, headers=headers)
+            response.raise_for_status()
 
     async def ensure_client(self, tg_id: int, username: str = "") -> Client:
         """Return the client for ``tg_id``, creating it if the panel lacks it.

@@ -149,7 +149,12 @@ class LegacyImporter:
         """Pin a never-activated legacy client (``0`` expiry, disabled) to ``now``."""
         expiry_ms = int(getattr(client, "expiry_time", 0) or 0)
         enabled = bool(getattr(client, "enable", False))
-        if expiry_ms != 0 or is_unlimited(expiry_ms, enabled):
+        if expiry_ms != 0:
+            return
+        if enabled:
+            # ``0`` + enabled is a genuinely perpetual client: assert we leave it
+            # untouched (S0-1.8).
+            assert is_unlimited(expiry_ms, enabled)
             return
         report.normalized.append(tg_id)
         if dry_run:

@@ -249,7 +249,23 @@ class ProfileNav(_Menu):
 
     ns: ClassVar[str] = "prf"
     SECTIONS: ClassVar[frozenset[str]] = frozenset(
-        {"profile", "pay", "support", "vpn", "back"}
+        {
+            "profile",
+            "pay",
+            "support",
+            "vpn",
+            "back",
+            # Stage 1 screens (§S1-1.7): QR, instruction pickers, link screen
+            # and regeneration. Declared up front so the namespace stays stable.
+            "qr",
+            "instr",
+            "instr_android",
+            "instr_ios",
+            "instr_windows",
+            "instr_macos",
+            "link",
+            "newlink",
+        }
     )
 
 

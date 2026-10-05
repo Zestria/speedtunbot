@@ -14,12 +14,22 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from py3xui import Client
 
 from app.errors import ClientNotFound, NotSupportedError, PanelError, PanelUnavailable
 from app.services.panel import ClientTraffic, new_sub_id
+
+
+@dataclass
+class _ClientStats:
+    """Per-client traffic counters, kept apart from the settings copy."""
+
+    up: int = 0
+    down: int = 0
+    last_online_ms: int | None = None
 
 
 class FakePanel:
@@ -31,10 +41,15 @@ class FakePanel:
     * ``drop_writes`` — updates are silently discarded, so the post-write
       verification raises :class:`PanelError`;
     * ``latency`` — added to every call (used to test timeouts/ordering).
+
+    Per-client traffic is kept in ``_stats``, separate from ``_clients`` (the
+    settings copy), mirroring the real panel: ``get_traffic`` merges the two
+    and ``reset_traffic`` zeroes only the stats (S0-2.6).
     """
 
     def __init__(self) -> None:
         self._clients: dict[int, Client] = {}
+        self._stats: dict[int, _ClientStats] = {}
         self._lock = asyncio.Lock()
         self.unavailable = False
         self.drop_writes = False
@@ -51,6 +66,9 @@ class FakePanel:
         enable: bool = True,
         sub_id: str | None = None,
         total_gb: int = 0,
+        up: int = 0,
+        down: int = 0,
+        last_online_ms: int | None = None,
     ) -> Client:
         """Insert a client directly (bypassing the gateway)."""
         client = Client(
@@ -62,6 +80,9 @@ class FakePanel:
             total_gb=total_gb,
         )
         self._clients[tg_id] = client
+        self._stats[tg_id] = _ClientStats(
+            up=int(up), down=int(down), last_online_ms=last_online_ms
+        )
         return client
 
     def _guard(self, name: str) -> None:
@@ -93,14 +114,16 @@ class FakePanel:
         client = self._clients.get(int(tg_id))
         if client is None:
             return None
+        stats = self._stats.get(int(tg_id), _ClientStats())
         return ClientTraffic(
             email=client.email,
-            up=int(client.up),
-            down=int(client.down),
+            up=stats.up,
+            down=stats.down,
             total=int(client.total),
             expiry_ms=int(client.expiry_time),
             enable=bool(client.enable),
             sub_id=client.sub_id,
+            last_online_ms=stats.last_online_ms,
         )
 
     async def server_status(self) -> dict[str, Any]:
@@ -154,32 +177,30 @@ class FakePanel:
         )
 
     async def set_limits(
-        self, tg_id: int, total_gb: int | None = None, limit_ip: int | None = None
+        self, tg_id: int, total_bytes: int | None = None, limit_ip: int | None = None
     ) -> Client:
-        gb = 0 if total_gb is None else max(0, int(total_gb))
+        total = 0 if total_bytes is None else max(0, int(total_bytes))
         ips = 0 if limit_ip is None else max(0, int(limit_ip))
 
         def apply(client: Client) -> bool:
-            client.total_gb = gb
+            client.total_gb = total
             client.limit_ip = ips
             return True
 
         return await self.mutate(
             tg_id,
             apply,
-            lambda c: int(c.total_gb) == gb and int(c.limit_ip) == ips,
+            lambda c: int(c.total_gb) == total and int(c.limit_ip) == ips,
             desc="limits",
         )
 
     async def reset_traffic(self, tg_id: int) -> Client:
-        def apply(client: Client) -> bool:
-            client.up = 0
-            client.down = 0
-            return True
-
-        return await self.mutate(
-            tg_id, apply, lambda c: int(c.up) == 0 and int(c.down) == 0, desc="reset"
-        )
+        self._guard("reset_traffic")
+        async with self._lock:
+            client = self._get(tg_id)
+            # Only the stats are zeroed; the settings copy stays untouched.
+            self._stats[int(tg_id)] = _ClientStats()
+        return client.model_copy(deep=True)
 
     async def ensure_client(self, tg_id: int, username: str = "") -> Client:
         self._guard("ensure_client")
@@ -244,8 +265,15 @@ class FakeBot:
         self.callback_answers: list[tuple[str, str | None, bool]] = []
         #: Same messages as ``sent`` plus the keyword arguments, for HTML tests.
         self.messages: list[tuple[int, str, dict[str, Any]]] = []
+        #: ``(chat_id, message_id, text, kwargs)`` for ``edit_message_text``.
+        self.edits: list[tuple[int, int, str, dict[str, Any]]] = []
+        #: ``(chat_id, message_id)`` for every ``delete_message`` call.
+        self.deleted: list[tuple[int, int]] = []
         #: ``(chat_id, kind, file_id, kwargs)`` for ``send_photo``/``send_document``.
         self.media: list[tuple[int, str, str, dict[str, Any]]] = []
+        #: Raise ``RuntimeError`` on every edit (exercises the send fallback).
+        self.fail_edit = False
+        self._edited: dict[tuple[int, int], str] = {}
         self._states: dict[tuple[int, int], str | None] = {}
         self._data: dict[tuple[int, int], dict[str, Any]] = {}
         self._next_message_id = 1000
@@ -266,6 +294,30 @@ class FakeBot:
         **kwargs: object,
     ) -> None:
         self.callback_answers.append((callback_query_id, text, show_alert))
+
+    # --- edits / deletes (Stage-1 screens) ---------------------------------
+
+    async def edit_message_text(
+        self, text: str, chat_id: int, message_id: int, **kwargs: object
+    ) -> FakeMessage:
+        """Edit a message; mirror Telegram's ``message is not modified`` error.
+
+        Editing a message to the text it already holds is a no-op with a ``400``
+        in the real API, so re-rendering the same card must not raise here
+        either (S1-1.4).
+        """
+        if self.fail_edit:
+            raise RuntimeError("Bad Request: message to edit not found")
+        key = (int(chat_id), int(message_id))
+        if self._edited.get(key) == text:
+            raise RuntimeError("Bad Request: message is not modified")
+        self._edited[key] = text
+        self.edits.append((int(chat_id), int(message_id), text, dict(kwargs)))
+        return FakeMessage(int(message_id))
+
+    async def delete_message(self, chat_id: int, message_id: int) -> None:
+        self.deleted.append((int(chat_id), int(message_id)))
+        self._edited.pop((int(chat_id), int(message_id)), None)
 
     # --- media (receipts / support attachments) ----------------------------
 

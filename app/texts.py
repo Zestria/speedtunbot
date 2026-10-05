@@ -55,17 +55,37 @@ START_RETURNING = (
     "Для просмотра подписки используйте /profile."
 )
 
-# --- /profile (M0-09.2) ----------------------------------------------------
+# --- /profile dashboard (M0-09.2 / S1-1) -----------------------------------
 
-PROFILE_TITLE = "📱 <b>Моя подписка</b>"
-PROFILE_STATUS_LABEL = "Статус:"
-PROFILE_STATUS_ACTIVE = "🟢 Активна"
-PROFILE_STATUS_INACTIVE = "🔴 Неактивна"
-PROFILE_EXPIRES_LABEL = "Действует до:"
-PROFILE_UNLIMITED = "Бессрочно"
-PROFILE_LINK_HEADING = "<b>Ссылка на подключение:</b>"
-PROFILE_LINK_HINT = "Нажмите на ссылку или скопируйте её."
+PROFILE_TITLE = "👤 <b>Мой профиль</b>"
+#: State line. Expiry is evaluated first: the panel disables a client the
+#: moment its expiry passes, so a disabled client with a future expiry is a
+#: suspension, not an expiry (S1-1.9).
+PROFILE_STATE_ACTIVE = "🟢 <b>Подписка активна</b>"
+PROFILE_STATE_EXPIRING = "🟡 <b>Подписка скоро заканчивается</b>"
+PROFILE_STATE_EXPIRED = "🔴 <b>Подписка не активна</b>"
+PROFILE_STATE_SUSPENDED = "🔴 <b>Подписка приостановлена</b>"
+PROFILE_STATE_NOT_ACTIVATED = "🔴 <b>Подписка не активирована</b>"
+#: Shown under the expired / never-activated states.
+PROFILE_STATE_HINT = "Чтобы возобновить доступ, оплатите тариф."
+PROFILE_EXPIRES_LABEL = "📅 До:"
+#: ``expiry == 0`` with an enabled client — the panel's "no expiry" marker.
+PROFILE_UNLIMITED = "∞"
+PROFILE_TRAFFIC_LABEL = "📊 Трафик:"
+PROFILE_ACTIVITY_LABEL = "🕒 Активность:"
+PROFILE_ACTIVITY_TODAY = "сегодня в {time}"
+PROFILE_ACTIVITY_YESTERDAY = "вчера в {time}"
+PROFILE_ACTIVITY_OTHER = "{date} в {time}"
+PROFILE_LINK_LABEL = "🔗"
 PROFILE_NO_ACCOUNT = "⚠️ У вас ещё нет аккаунта.\n\nПерейдите в /start для регистрации."
+
+# --- /profile keyboard (S1-1.10) -------------------------------------------
+
+BUTTON_PROFILE_QR = "📱 QR-код"
+BUTTON_PROFILE_INSTR = "📖 Инструкция"
+BUTTON_PROFILE_EXTEND = "💳 Продлить"
+BUTTON_PROFILE_NEWLINK = "🔄 Новая ссылка"
+BUTTON_PROFILE_SUPPORT = "🆘 Поддержка"
 
 # --- /support, /support_user (M0-09.3) -------------------------------------
 
@@ -209,6 +229,8 @@ PAYMENT_RECEIPT_CARD = "🧾 Чек к заявке #{id}"
 PAYMENT_CARD_SYSTEM = "системой"
 PAYMENT_NO_USERNAME = "нет @username"
 PAYMENT_EXPIRY_UNLIMITED = "бессрочно"
+#: A disabled ``0`` expiry (never activated) shown on the review card (S0-1.5).
+PAYMENT_EXPIRY_NOT_ACTIVATED = "не активирован"
 PAYMENT_USER_APPROVED = (
     "✅ <b>Подписка активирована!</b>\n\n"
     "Тариф: <b>{name}</b>\n"

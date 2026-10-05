@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import httpx
@@ -10,24 +11,35 @@ import pytest
 from py3xui import Client
 
 from app.errors import ClientNotFound, NotSupportedError, PanelError, PanelUnavailable
-from app.services.panel import PanelGateway
+from app.services import panel as panel_mod
+from app.services.panel import PanelGateway, gb_to_bytes
 from app.settings import Settings
 
 TG = 1001
 
 
 class StubApi:
-    """Minimal stand-in for ``py3xui.AsyncApi`` (token mode)."""
+    """Minimal stand-in for ``py3xui.AsyncApi`` (token mode).
+
+    Settings clients (``inbound.settings.clients``) and per-client traffic
+    stats (``inbound.client_stats``) are kept in two separate maps, exactly
+    like the deployed panel (S0-2.3).
+    """
 
     def __init__(self) -> None:
         self.clients: dict[str, Client] = {}
+        self.stats: dict[str, Client] = {}
         self.apply_updates = True
         self.error: Exception | None = None
         self.delay = 0.0
         self.inbound_reads = 0
+        self.resets: list[str] = []
         self.inbound = SimpleNamespace(get_by_id=self._get_by_id)
         self.client = SimpleNamespace(
-            add=self._add, update=self._update, delete=self._delete
+            add=self._add,
+            update=self._update,
+            delete=self._delete,
+            reset_stats=self._reset_stats,
         )
         self.server = SimpleNamespace(get_status=self._get_status)
 
@@ -45,7 +57,8 @@ class StubApi:
         return SimpleNamespace(
             settings=SimpleNamespace(
                 clients=[c.model_copy(deep=True) for c in self.clients.values()]
-            )
+            ),
+            client_stats=[c.model_copy(deep=True) for c in self.stats.values()],
         )
 
     async def _add(self, inbound_id: int, clients: list[Client]) -> None:
@@ -55,6 +68,7 @@ class StubApi:
             stored = client.model_copy(deep=True)
             stored.enable = True
             self.clients[stored.email] = stored
+            self.stats[stored.email] = stored.model_copy(deep=True)
 
     async def _update(self, client_id: str, client: Client) -> None:
         await self._pre()
@@ -67,6 +81,15 @@ class StubApi:
         for email, client in list(self.clients.items()):
             if client.id == client_id:
                 del self.clients[email]
+                self.stats.pop(email, None)
+
+    async def _reset_stats(self, inbound_id: int, email: str) -> None:
+        await self._pre()
+        self.resets.append(email)
+        stats = self.stats.get(email)
+        if stats is not None:
+            stats.up = 0
+            stats.down = 0
 
     async def _get_status(self) -> object:
         await self._pre()
@@ -77,11 +100,53 @@ def make_gateway(settings: Settings, api: StubApi, **kwargs: object) -> PanelGat
     return PanelGateway(settings, api=api, **kwargs)  # type: ignore[arg-type]
 
 
-def seed(api: StubApi, tg_id: int = TG, **fields: object) -> Client:
+def seed(
+    api: StubApi,
+    tg_id: int = TG,
+    *,
+    up: int = 0,
+    down: int = 0,
+    **fields: object,
+) -> Client:
+    """Seed a settings client plus a matching stats entry."""
     fields.setdefault("enable", False)
-    client = Client(id="uuid-1", email=str(tg_id), **fields)  # type: ignore[arg-type]
+    client = Client(id="uuid-1", email=str(tg_id), up=up, down=down, **fields)
     api.clients[str(tg_id)] = client
+    api.stats[str(tg_id)] = Client(
+        id="uuid-1", email=str(tg_id), enable=True, up=up, down=down
+    )
     return client
+
+
+def recording_http_client(
+    calls: list[tuple[str, dict[str, str]]],
+    *,
+    error: Exception | None = None,
+    on_post: Callable[[str], None] | None = None,
+) -> type:
+    """Build an ``httpx.AsyncClient`` stand-in that records raw POSTs."""
+
+    class RecordingHttpClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> RecordingHttpClient:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def post(
+            self, url: str, *, headers: dict[str, str], **kwargs: object
+        ) -> httpx.Response:
+            calls.append((url, dict(headers)))
+            if on_post is not None:
+                on_post(url)
+            if error is not None:
+                raise error
+            return httpx.Response(200, request=httpx.Request("POST", url))
+
+    return RecordingHttpClient
 
 
 async def test_ensure_client_creates_disabled_expired_client(
@@ -188,19 +253,114 @@ async def test_concurrent_writes_serialise(settings: Settings) -> None:
     assert client is not None and client.up == 2  # no lost update
 
 
-async def test_limits_and_reset_traffic(settings: Settings) -> None:
+async def test_set_limits_writes_bytes(settings: Settings) -> None:
     api = StubApi()
     seed(api, up=500, down=700, total_gb=0)
     gateway = make_gateway(settings, api)
 
-    limited = await gateway.set_limits(TG, total_gb=50, limit_ip=2)
-    assert (limited.total_gb, limited.limit_ip) == (50, 2)
+    limited = await gateway.set_limits(TG, total_bytes=1024**3, limit_ip=2)
+    assert (limited.total_gb, limited.limit_ip) == (1073741824, 2)
 
-    unlimited = await gateway.set_limits(TG, total_gb=None, limit_ip=None)
+    unlimited = await gateway.set_limits(TG, total_bytes=None, limit_ip=None)
     assert (unlimited.total_gb, unlimited.limit_ip) == (0, 0)
 
-    reset = await gateway.reset_traffic(TG)
-    assert (reset.up, reset.down) == (0, 0)
+
+async def test_gb_to_bytes_and_panel_total_helpers() -> None:
+    assert gb_to_bytes(1) == 1024**3
+    assert gb_to_bytes(None) == 0
+    assert panel_mod._to_panel_total(1024**3) == 1024**3
+
+
+async def test_reset_traffic_uses_the_panel_reset(settings: Settings) -> None:
+    api = StubApi()
+    seed(api, up=500, down=700)
+    gateway = make_gateway(settings, api)
+
+    await gateway.reset_traffic(TG)
+
+    assert api.resets == [str(TG)]
+    traffic = await gateway.get_traffic(TG)
+    assert traffic is not None and (traffic.up, traffic.down) == (0, 0)
+
+
+async def test_reset_traffic_raw_fallback(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = StubApi()
+    seed(api, up=500, down=700)
+    # No py3xui wrapper -> the gateway must use the raw reset route.
+    api.client = SimpleNamespace(add=api._add, update=api._update, delete=api._delete)
+    panel_settings = settings.model_copy(
+        update={"domain": "https://panel.example.com/xui/"}
+    )
+    gateway = make_gateway(panel_settings, api)
+
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def zero(_url: str) -> None:
+        stats = api.stats[str(TG)]
+        stats.up = 0
+        stats.down = 0
+
+    monkeypatch.setattr(
+        panel_mod.httpx, "AsyncClient", recording_http_client(calls, on_post=zero)
+    )
+
+    await gateway.reset_traffic(TG)
+
+    url, headers = calls[0]
+    assert url == (
+        "https://panel.example.com/xui/panel/api/inbounds/1/resetClientTraffic/1001"
+    )
+    assert headers["Authorization"] == "Bearer vpn-token-value"
+    traffic = await gateway.get_traffic(TG)
+    assert traffic is not None and traffic.used == 0
+
+
+async def test_reset_traffic_raw_fallback_maps_transport_error(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = StubApi()
+    seed(api, up=1, down=1)
+    api.client = SimpleNamespace(add=api._add, update=api._update, delete=api._delete)
+    gateway = make_gateway(settings, api)
+
+    monkeypatch.setattr(
+        panel_mod.httpx,
+        "AsyncClient",
+        recording_http_client([], error=httpx.ConnectError("boom")),
+    )
+
+    with pytest.raises(PanelUnavailable):
+        await gateway.reset_traffic(TG)
+
+
+async def test_get_traffic_prefers_client_stats(settings: Settings) -> None:
+    api = StubApi()
+    seed(api, up=1, down=1, total=1000, expiry_time=555, enable=True, sub_id="abc")
+    # The panel's live counters differ from the settings copy.
+    api.stats[str(TG)].up = 100
+    api.stats[str(TG)].down = 200
+    gateway = make_gateway(settings, api)
+
+    traffic = await gateway.get_traffic(TG)
+    assert traffic is not None
+    assert (traffic.up, traffic.down) == (100, 200)
+    assert traffic.total == 1000  # the quota still comes from the settings
+    assert traffic.expiry_ms == 555
+    assert traffic.enable is True
+    assert traffic.last_online_ms is None
+
+
+async def test_get_traffic_falls_back_to_settings_client(settings: Settings) -> None:
+    api = StubApi()
+    seed(api, up=7, down=8, enable=True)
+    api.stats.clear()  # the panel reports no stats for this client
+    gateway = make_gateway(settings, api)
+
+    traffic = await gateway.get_traffic(TG)
+    assert traffic is not None and (traffic.up, traffic.down) == (7, 8)
+    assert traffic.last_online_ms is None
 
 
 async def test_get_traffic_snapshot(settings: Settings) -> None:
@@ -214,6 +374,7 @@ async def test_get_traffic_snapshot(settings: Settings) -> None:
     assert traffic.used == 30
     assert traffic.expiry_ms == 555
     assert traffic.sub_id == "abc"
+    assert traffic.last_online_ms is None
     assert await gateway.get_traffic(9999) is None
 
 

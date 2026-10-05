@@ -38,7 +38,6 @@ from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
 from app.services.subscriptions import (
     SubscriptionService,
-    base_expiry_ms,
     calculate_expiry_ms,
     is_unlimited,
     now_ms,
@@ -54,6 +53,10 @@ ACTION_EXPIRE = "payment.expire"
 
 #: How long an unreviewed pending payment may sit before it is auto-closed.
 DEFAULT_STALE_HOURS = 24
+
+#: Review-card sentinel for a never-activated placeholder (``expiry == 0`` with
+#: ``enable=False``); distinct from ``0`` (truly unlimited) and a real timestamp.
+NOT_ACTIVATED_MS = -1
 
 
 @dataclass(frozen=True)
@@ -419,8 +422,12 @@ class PaymentService:
             )
             return
         if not target_ms:
-            base_ms = base_expiry_ms(current_ms, enabled, now_ms())
-            target_ms = calculate_expiry_ms(base_ms, int(payment.days), now_ms())
+            # S0-1.4: ``enabled`` is the client's state *before* the ``freeze``
+            # above turned it on, so a legacy placeholder (``0`` + disabled)
+            # counts from now instead of being read as perpetual.
+            target_ms = calculate_expiry_ms(
+                current_ms, int(payment.days), now_ms(), enabled
+            )
             await self._record_target(
                 payment.id, before_ms=current_ms, target_ms=target_ms
             )
@@ -557,11 +564,13 @@ class PaymentService:
         return None if user is None else user.username
 
     async def _current_expiry(self, tg_id: int) -> int:
-        """Return the client's *effective* expiry (``0`` = truly unlimited).
+        """Return the client's *effective* expiry for the review card.
 
-        A legacy placeholder (``expiry_time == 0`` with ``enable=False``) has never
-        been activated, so it reports the base ``now`` instead of ``0``: the review
-        card then shows a finite date and no "бессрочно" warning.
+        ``0`` is returned only for a **truly unlimited** client (``0`` **and**
+        enabled). A legacy placeholder (``0`` with ``enable=False``) is reported
+        as :data:`NOT_ACTIVATED_MS` so the card shows «не активирован» instead of
+        a false finite date, and a real expiry is returned verbatim. ``0`` also
+        stands for "unknown" (no panel, no client, or a read failure).
         """
         panel = self._panel
         if panel is None:
@@ -574,9 +583,9 @@ class PaymentService:
             return 0
         expiry_ms = int(client.expiry_time or 0)
         enabled = bool(client.enable)
-        if is_unlimited(expiry_ms, enabled):
-            return 0
-        return base_expiry_ms(expiry_ms, enabled, now_ms())
+        if expiry_ms == 0:
+            return 0 if enabled else NOT_ACTIVATED_MS
+        return expiry_ms
 
     async def _audit_log(
         self, actor: int | None, action: str, payment_id: int, **details: Any
@@ -592,6 +601,8 @@ class PaymentService:
     def _expiry_label(self, expiry_ms: int) -> str:
         if expiry_ms == 0:
             return texts.PAYMENT_EXPIRY_UNLIMITED
+        if expiry_ms == NOT_ACTIVATED_MS:
+            return texts.PAYMENT_EXPIRY_NOT_ACTIVATED
         try:
             moment = datetime.fromtimestamp(
                 expiry_ms / 1000, tz=ZoneInfo(self._timezone)

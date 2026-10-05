@@ -12,7 +12,6 @@ from app.services.subscriptions import (
     UNLIMITED_REASON,
     GrantResult,
     SubscriptionService,
-    base_expiry_ms,
     calculate_expiry_ms,
     is_unlimited,
     now_ms,
@@ -23,18 +22,24 @@ NOW = 1_700_000_000_000
 
 
 @pytest.mark.parametrize(
-    ("old_ms", "days", "expected"),
+    ("old_ms", "days", "enabled", "expected"),
     [
-        (None, 30, NOW + 30 * MS_PER_DAY),  # unknown -> counts from now
-        (0, 30, 0),  # perpetual -> untouched
-        (-1, 7, NOW + 7 * MS_PER_DAY),  # delayed start marker
-        (NOW - 5 * MS_PER_DAY, 30, NOW + 30 * MS_PER_DAY),  # expired -> from now
-        (NOW + 3 * MS_PER_DAY, 30, NOW + 33 * MS_PER_DAY),  # active -> extend
-        (NOW, 0, NOW),  # zero-day grant is a no-op
+        (None, 30, True, NOW + 30 * MS_PER_DAY),  # unknown -> counts from now
+        (None, 30, False, NOW + 30 * MS_PER_DAY),
+        (0, 30, True, 0),  # perpetual -> untouched
+        (0, 30, False, NOW + 30 * MS_PER_DAY),  # never activated -> from now
+        (-1, 7, True, NOW + 7 * MS_PER_DAY),  # delayed start marker
+        (-1, 7, False, NOW + 7 * MS_PER_DAY),
+        (NOW - 5 * MS_PER_DAY, 30, True, NOW + 30 * MS_PER_DAY),  # expired -> now
+        (NOW + 3 * MS_PER_DAY, 30, True, NOW + 33 * MS_PER_DAY),  # active -> extend
+        (NOW, 0, True, NOW),  # zero-day grant is a no-op
     ],
 )
-def test_calculate_expiry_ms(old_ms: int | None, days: int, expected: int) -> None:
-    assert calculate_expiry_ms(old_ms, days, NOW) == expected
+def test_calculate_expiry_ms(
+    old_ms: int | None, days: int, enabled: bool, expected: int
+) -> None:
+    """AC (S0-1.1): ``0`` is perpetual only while the client is enabled."""
+    assert calculate_expiry_ms(old_ms, days, NOW, enabled) == expected
 
 
 async def test_grant_days_extends_active_client() -> None:
@@ -93,14 +98,6 @@ def test_is_unlimited_requires_enabled(
 ) -> None:
     """AC: ``expiry == 0`` alone is *not* unlimited — the client must be enabled."""
     assert is_unlimited(expiry_ms, enabled) is unlimited
-
-
-def test_base_expiry_counts_a_disabled_placeholder_from_now() -> None:
-    """AC: a never-activated legacy client is extended from now, not made perpetual."""
-    assert base_expiry_ms(0, False, NOW) == NOW
-    assert base_expiry_ms(None, False, NOW) == NOW
-    assert base_expiry_ms(0, True, NOW) == 0  # perpetual stays perpetual
-    assert base_expiry_ms(NOW + 5, False, NOW) == NOW + 5
 
 
 async def test_grant_days_on_a_legacy_placeholder_sets_a_finite_expiry() -> None:

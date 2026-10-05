@@ -71,6 +71,35 @@ def test_namespace_round_trip(payload: Callback, data: str) -> None:
     assert unpack(data) == payload
 
 
+#: Stage-1 profile tokens (S1-1.7) — declared before their screens exist.
+PROFILE_SECTIONS = (
+    "qr",
+    "instr",
+    "instr_android",
+    "instr_ios",
+    "instr_windows",
+    "instr_macos",
+    "link",
+    "newlink",
+)
+
+
+@pytest.mark.parametrize("section", PROFILE_SECTIONS)
+def test_profile_nav_new_sections_round_trip(section: str) -> None:
+    """AC (S1-1.7): every token round-trips and fits the 64-byte budget."""
+    payload = ProfileNav(section=section)
+    data = payload.pack()
+
+    assert data == f"prf:{section}"
+    assert unpack(data) == payload
+    assert len(data.encode("utf-8")) <= MAX_BYTES
+
+
+def test_profile_nav_rejects_an_unknown_section() -> None:
+    with pytest.raises(InvalidCallback):
+        unpack("prf:nope")
+
+
 def test_confirm_namespace_round_trip() -> None:
     assert Confirm(token="tok").pack() == "cf:tok"
     assert Confirm(token="tok", cancel=True).pack() == "cf:x:tok"

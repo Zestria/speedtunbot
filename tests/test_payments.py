@@ -344,6 +344,26 @@ async def test_legacy_placeholder_client_gets_a_finite_expiry(
     assert row.expiry_after_ms == expiry
 
 
+async def test_review_card_shows_not_activated_for_a_placeholder(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S0-1.5): a ``0`` + disabled placeholder is not a date, not «бессрочно»."""
+    await seed_user(session_factory, USER)
+    tariff = await seed_tariff(session_factory)
+    panel_of(handler_container).seed(USER, expiry_ms=0, enable=False)
+
+    payments = payments_of(handler_container)
+    payment = await payments.create(USER, tariff)
+    await payments.submit(payment.id)
+
+    (card_text,) = fake_bot.texts_to(OWNER)
+    assert texts.PAYMENT_EXPIRY_NOT_ACTIVATED in card_text
+    assert texts.PAYMENT_EXPIRY_UNLIMITED not in card_text
+    assert texts.PAYMENT_CARD_UNLIMITED_WARNING not in card_text
+
+
 async def test_create_refuses_a_user_without_a_row(
     handler_container: Container, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
@@ -547,7 +567,11 @@ async def test_user_cancels_pending_payment_via_callback(
 
     row = await load_payment(session_factory, payment.id)
     assert row.status == PaymentStatus.CANCELLED
-    assert (CHAT, texts.PAYMENT_CANCELLED_BY_USER) in fake_bot.sent
+    # ``_edit`` now succeeds against FakeBot's edit slice (added for S1-1), so
+    # the notice lands in ``edits`` rather than falling back to ``sent``.
+    delivered = [text for cid, _, text, _ in fake_bot.edits if cid == CHAT]
+    delivered += [text for cid, text in fake_bot.sent if cid == CHAT]
+    assert texts.PAYMENT_CANCELLED_BY_USER in delivered
 
 
 async def test_expire_stale_closes_unreviewed_pending_payment(
