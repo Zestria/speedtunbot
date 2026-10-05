@@ -77,6 +77,15 @@ def test_owner_menu_equals_the_admin_menu() -> None:
     assert "admin" in names(Role.SUPPORT)
 
 
+def test_invite_joins_the_admin_menu_only() -> None:
+    """AC (§S3-3.8): ``/invite`` is an admin/owner command, never a user one."""
+    assert "invite" in ADMIN_COMMANDS
+    assert "invite" in names(Role.ADMIN)
+    assert "invite" in names(Role.OWNER)
+    assert "invite" not in names(Role.SUPPORT)
+    assert "invite" not in names(None)
+
+
 # --- startup publishing (§S4-1) ---------------------------------------------
 
 

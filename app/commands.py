@@ -9,12 +9,11 @@ staff member gets a scope of their own:
 * everyone — ``/start /profile /pay /support /help``;
 * any staff role — plus ``/admin`` (``users.view``) and ``/support_user``
   (``support.reply``), which the ``support`` role holds too;
-* ``admin`` and ``owner`` — plus ``/broadcast /ban /unban /banned_list
+* ``admin`` and ``owner`` — plus ``/invite /broadcast /ban /unban /banned_list
   /maintenance``.
 
 Only commands that are **actually registered** appear here: a menu entry that
-opens nothing is the command-menu twin of a dead button (§S2-1). ``/invite``
-(§S3-3) joins the admin menu the moment that screen registers its handler.
+opens nothing is the command-menu twin of a dead button (§S2-1).
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ DESCRIPTIONS: dict[str, str] = {
     "help": "ℹ️ Помощь",
     "admin": "🛠 Админ-панель",
     "support_user": "✉️ Написать пользователю",
+    "invite": "📨 Приглашения",
     "broadcast": "📢 Рассылка",
     "ban": "🚫 Забанить",
     "unban": "✅ Разбанить",
@@ -57,6 +57,7 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "unban",
     "banned_list",
     "maintenance",
+    "invite",
 )
 
 

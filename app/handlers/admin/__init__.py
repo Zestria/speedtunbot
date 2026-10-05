@@ -18,6 +18,7 @@ from app.container import Container
 
 # Importing the screen registers ``adm:payments`` in ``nav.SCREENS`` (§S2-4.2).
 from app.handlers.admin import access as access_screen  # noqa: F401
+from app.handlers.admin import invites as invites_screen  # noqa: F401
 from app.handlers.admin import payments as payments_screen  # noqa: F401
 
 # Same for ``adm:server`` plus the ``cf:`` restart action (§S2-5.4/.5).
@@ -70,3 +71,7 @@ def register_admin_handler(bot: Any, container: Container) -> None:
     # The access screen owns the ``acc:`` review namespace (§S3-2.6); its
     # ``adm:access`` buttons ride the shared callback above.
     access_screen.register_access_handler(bot, container)
+
+    # The invites screen owns the ``inv:`` wizard namespace (§S3-3.7); its
+    # ``adm:invites`` step-1 card rides the shared callback above.
+    invites_screen.register_invites_handler(bot, container)

@@ -22,7 +22,7 @@ from telebot.util import quick_markup
 from app import texts
 from app.callbacks import AdminNav, ProfileNav
 from app.container import Container
-from app.db.models import UserStatus
+from app.db.models import InviteKind, UserStatus
 from app.errors import PanelError
 from app.handlers.common import alert_staff, reply
 from app.permissions import Permission, has
@@ -225,11 +225,38 @@ async def _notify_access_request(
 async def _redeem_invite(
     payload: str, message: Any, bot: Any, container: Container
 ) -> None:
-    """Redeem an ``inv_…`` deep-link token (§S3-3).
+    """Redeem an ``inv_…`` deep-link token (§S3-3.9).
 
-    Implemented in S3-3; until then an invite link simply reports a stale link.
+    A valid **user** invite approves the redeemer immediately (row → ``approved``
+    + exactly one panel client) and drops them on the main menu; anything else —
+    unknown, revoked, expired, already spent, or an admin invite (a later task) —
+    is answered as a stale link. The raw token is never logged.
     """
-    await reply(bot, int(message.chat.id), texts.ERROR_STALE_BUTTON)
+    chat_id = int(message.chat.id)
+    from_user = message.from_user
+    tg_id = int(from_user.id)
+    username = getattr(from_user, "username", None)
+    first_name = getattr(from_user, "first_name", None)
+
+    invites = container.invites
+    if invites is None:  # pragma: no cover - container is wired at startup
+        await reply(bot, chat_id, texts.ERROR_GENERIC)
+        return
+    raw_token = payload[len(INVITE_PREFIX) :]
+    try:
+        result = await invites.redeem(raw_token)
+    except Exception:  # a DB hiccup must never break /start
+        logger.warning("invite redeem failed", exc_info=True)
+        await reply(bot, chat_id, texts.ERROR_GENERIC)
+        return
+    if result.invite is None or str(result.invite.kind) != str(InviteKind.USER):
+        await reply(bot, chat_id, texts.INVITE_REDEEM_FAILED)
+        return
+
+    is_staff = await _is_staff(tg_id)
+    await _greet_approved(
+        bot, chat_id, container, tg_id, username, first_name, is_staff=is_staff
+    )
 
 
 async def help_command(message: Any, bot: Any, container: Container) -> None:

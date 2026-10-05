@@ -112,6 +112,7 @@ async def run() -> None:
     container.init_confirmations()
     container.init_panel()
     container.init_users()
+    container.init_invites()
     container.init_payments()
     # Bug-fix pass: never run blind against an un-imported legacy deployment.
     await ensure_legacy_import(container)

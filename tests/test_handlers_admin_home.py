@@ -211,6 +211,7 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
         "👥 Пользователи",
         "💳 Платежи",
         "⏳ Заявки (0)",
+        "📨 Приглашения",
         "🖥 Сервер",
         "📢 Рассылка",
         "⚙️ Настройки",
@@ -222,6 +223,7 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
         "👥 Пользователи",
         "💳 Платежи",
         "⏳ Заявки (0)",
+        "📨 Приглашения",
         "🖥 Сервер",
         "📢 Рассылка",
         "🔄 Обновить",
@@ -234,6 +236,7 @@ def test_dashboard_keyboard_filters_by_role_and_registry(
     # ``audit`` is still unbuilt → no dead button for it.
     assert "adm:server" in payloads_of(owner)
     assert "adm:broadcast" in payloads_of(owner)
+    assert "adm:invites" in payloads_of(owner)
     assert "adm:audit" not in payloads_of(owner)
 
 

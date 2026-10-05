@@ -448,3 +448,42 @@ NEWLINK_FAILED = (
 #: payment notification can never name the same destination differently.
 BUTTON_GO_PROFILE = BUTTON_MENU_PROFILE
 BUTTON_GO_SUPPORT = BUTTON_MENU_SUPPORT
+
+# --- user invites (S3-3) ----------------------------------------------------
+
+#: Wizard step 1: how many times the link may be used.
+INVITE_USES_PROMPT = (
+    "📨 <b>Новое приглашение</b>\n\nСколько раз можно использовать ссылку?"
+)
+#: Wizard step 2: how long the link stays valid.
+INVITE_DAYS_PROMPT = "📨 <b>Новое приглашение</b>\n\nСрок действия ссылки?"
+#: Step-1 buttons; «∞» is the unlimited ``max_uses`` (stored as ``NULL``).
+BUTTON_INVITE_USES_1 = "1 использ."
+BUTTON_INVITE_USES_5 = "5 использ."
+BUTTON_INVITE_USES_INF = "∞"
+#: Step-2 buttons.
+BUTTON_INVITE_DAYS_1 = "1 день"
+BUTTON_INVITE_DAYS_7 = "7 дней"
+BUTTON_INVITE_DAYS_30 = "30 дней"
+#: Menu-of-the-section buttons.
+BUTTON_INVITE_CREATE = "➕ Создать приглашение"
+BUTTON_INVITE_LIST = "📋 Список приглашений"
+BUTTON_INVITE_REVOKE = "🗑 Отозвать"
+#: The raw link is shown exactly once, then only its hash remains (§S3-3).
+INVITE_CREATED = (
+    "✅ <b>Приглашение создано</b>\n\n"
+    "Ссылка (показывается один раз):\n<code>{link}</code>\n\n"
+    "Использований: {uses}\nСрок: {days}"
+)
+#: ``∞`` marker for an unlimited invite (step 1 and the list).
+INVITE_UNLIMITED = "∞"
+INVITE_LIST_TITLE = "📨 <b>Приглашения</b>"
+INVITE_LIST_EMPTY = "Активных приглашений нет."
+#: ``uses``/``max_uses`` and expiry of one list row (``{max_uses}`` may be ``∞``).
+INVITE_LIST_ROW = "№{id} · {uses}/{max_uses} · до {expires}"
+INVITE_REVOKED = "🗑 Приглашение отозвано."
+INVITE_REVOKE_GONE = "⌛ Приглашение уже отозвано."
+#: Shown when an ``inv_`` link is unknown, revoked, expired or already spent.
+INVITE_REDEEM_FAILED = ERROR_STALE_BUTTON
+#: QR photo caption (§S3-3.5) — the link itself is the captionless text message.
+INVITE_QR_CAPTION = "📱 QR-код приглашения"

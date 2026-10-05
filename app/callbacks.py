@@ -188,6 +188,20 @@ class Access(_IntAction):
 
 @_register
 @dataclass(frozen=True)
+class Invite(_IntAction):
+    """Invite wizard: ``inv:<action>:<arg>`` (§S3-3.4).
+
+    ``uses``/``days`` carry the chosen option (``0`` = ``∞``/no limit), ``revoke``
+    carries the invite id and ``list`` carries ``0`` (the option list has one
+    page) — one fixed 3-segment shape, like every other ``_IntAction``.
+    """
+
+    ns: ClassVar[str] = "inv"
+    ACTIONS: ClassVar[frozenset[str]] = frozenset({"uses", "days", "revoke", "list"})
+
+
+@_register
+@dataclass(frozen=True)
 class AdminGrant(_IntAction):
     """Admin-grant requests: ``adg:<ok|no>:<request_id>``."""
 

@@ -23,6 +23,7 @@ from app.callbacks import (
     Confirmation,
     Confirmations,
     ConfirmResult,
+    Invite,
     Pay,
     ProfileNav,
     Support,
@@ -66,6 +67,9 @@ def test_pack_rejects_multibyte_overflow() -> None:
         (AdminNav(section="users"), "adm:users"),
         (AdminNav(section="users", action="card", arg="123"), "adm:users:card:123"),
         (ProfileNav(section="vpn"), "prf:vpn"),
+        (Invite(action="uses", ref_id=5), "inv:uses:5"),
+        (Invite(action="days", ref_id=105), "inv:days:105"),
+        (Invite(action="list", ref_id=0), "inv:list:0"),
     ],
 )
 def test_namespace_round_trip(payload: Callback, data: str) -> None:
@@ -176,6 +180,11 @@ def test_access_actions_match_the_service_decisions() -> None:
         "adm",  # menu: missing section
         "adm:users:a:b:c",  # admin: too many segments
         "adm:nope",  # unknown section
+        "inv",  # invite: too few segments
+        "inv:uses",  # invite: missing arg
+        "inv:uses:1:2",  # invite: too many segments
+        "inv:nope:1",  # invite: unknown action
+        "inv:uses:abc",  # invite: arg is not an int
         "cf:",  # empty token
         "cf:x:",  # empty cancel token
         "cf:y:tok",  # malformed cancel marker

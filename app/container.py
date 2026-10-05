@@ -17,6 +17,7 @@ from app.callbacks import Confirmations
 from app.db.repositories.settings import DEFAULT_SETTINGS
 from app.services.admins import AdminService
 from app.services.audit import AuditService
+from app.services.invites import InviteService
 from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
 from app.services.payments import PaymentService
@@ -49,6 +50,8 @@ class Container:
     audit: AuditService | None = field(default=None)
     # User identity/access status (M0-09). Built via :meth:`init_users`.
     users: UserService | None = field(default=None)
+    # Invite links (§S3-3). Built via :meth:`init_invites`.
+    invites: InviteService | None = field(default=None)
     # DB-backed payments (M0-10). Built via :meth:`init_payments`.
     payments: PaymentService | None = field(default=None)
     # Server-side confirmation tokens (§S1-5.1). Built via
@@ -100,6 +103,12 @@ class Container:
         users = UserService(self.sessionmaker, panel=self.panel, audit=self.audit)
         self.users = users
         return users
+
+    def init_invites(self) -> InviteService:
+        """Create the invite-link service (needs the audit trail, §S3-3)."""
+        invites = InviteService(self.sessionmaker, audit=self.audit)
+        self.invites = invites
+        return invites
 
     def init_payments(self) -> PaymentService:
         """Create the payment service (needs panel/subscriptions/notifier, §M0-10)."""

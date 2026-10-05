@@ -98,6 +98,7 @@ async def handler_container(
     container.panel = FakePanel()
     container.subscriptions = SubscriptionService(container.panel)
     container.init_users()
+    container.init_invites()
     container.init_payments()
     container.notifier.attach_bot(fake_bot)  # type: ignore[union-attr]
     configure(bot=fake_bot, admins=container.admins)

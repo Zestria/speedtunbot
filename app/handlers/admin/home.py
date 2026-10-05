@@ -112,6 +112,8 @@ def dashboard_keyboard(role: Role | None, *, pending: int = 0) -> Any:
         buttons[f"⏳ Заявки ({int(pending)})"] = {
             "callback_data": AdminNav("access").pack()
         }
+    if role_has(role, Permission.INVITES_CREATE) and "invites" in SCREENS:
+        buttons["📨 Приглашения"] = {"callback_data": AdminNav("invites").pack()}
     if role_has(role, Permission.SERVER_VIEW) and "server" in SCREENS:
         buttons["🖥 Сервер"] = {"callback_data": AdminNav("server").pack()}
     if role_has(role, Permission.BROADCAST_SEND) and "broadcast" in SCREENS:

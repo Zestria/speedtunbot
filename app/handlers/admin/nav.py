@@ -43,6 +43,7 @@ SECTION_PERMISSIONS: dict[str, Permission] = {
     # Pending access requests are a review queue: seeing one *is* reviewing it, so
     # the section gate is ``access.review`` (the card buttons re-check it anyway).
     "access": Permission.ACCESS_REVIEW,
+    "invites": Permission.INVITES_CREATE,
     "server": Permission.SERVER_VIEW,
     "broadcast": Permission.BROADCAST_SEND,
     "settings": Permission.SETTINGS_EDIT,
