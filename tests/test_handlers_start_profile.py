@@ -16,20 +16,24 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import texts
-from app.callbacks import ProfileNav, unpack
+from app.callbacks import Confirm, ProfileNav, unpack
 from app.container import Container
-from app.db.models import Tariff, UserStatus
+from app.db.models import AuditLog, Tariff, UserStatus
 from app.db.repositories import users as users_repo
+from app.handlers.confirm import confirm_callback
 from app.handlers.profile import (
+    ACTION_NEWLINK,
     STATE_ACTIVE,
     STATE_EXPIRED,
     STATE_EXPIRING,
     STATE_NOT_ACTIVATED,
     STATE_SUSPENDED,
     STATE_UNLIMITED,
+    _last_regen,
     _show_instructions,
     load_profile_info,
     profile_callback,
@@ -746,3 +750,204 @@ async def test_menu_pay_button_refuses_a_pending_user(
 
     assert fake_bot.edits[-1][2] == texts.PAYMENT_NOT_APPROVED
     assert fake_bot.callback_answers[-1] == ("cb-501", None, False)
+
+
+# --- link regeneration (S1-5) ----------------------------------------------
+
+OTHER = 777
+
+
+@pytest.fixture(autouse=True)
+def _reset_regen_cooldown() -> Any:
+    """Isolate the module-level regeneration cooldown between tests (§S1-5.4)."""
+    _last_regen.clear()
+    yield
+    _last_regen.clear()
+
+
+async def audit_rows(
+    factory: async_sessionmaker[AsyncSession],
+) -> list[tuple[str, str | None]]:
+    """Return ``(action, target_id)`` for every audit row."""
+    async with factory() as session:
+        rows = (await session.execute(select(AuditLog))).scalars().all()
+    return [(row.action, row.target_id) for row in rows]
+
+
+def _payload_of(fake_bot: FakeBot, *, cancel: bool) -> str:
+    """Return the confirm / cancel ``cf:`` payload of the card last shown."""
+    for payload in payloads_of(fake_bot.edits[-1][3]["reply_markup"]):
+        parsed = unpack(payload)
+        assert isinstance(parsed, Confirm)
+        if parsed.cancel == cancel:
+            return payload
+    raise AssertionError("expected button missing from the confirmation card")
+
+
+def _token_of(fake_bot: FakeBot, *, cancel: bool) -> str:
+    """Return the token behind the confirm / cancel button of the last card."""
+    parsed = unpack(_payload_of(fake_bot, cancel=cancel))
+    assert isinstance(parsed, Confirm)
+    return parsed.token
+
+
+async def test_newlink_shows_a_confirmation_card(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-5.2): «🔄 Новая ссылка» asks first — nothing is written yet."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id, text) == (99, 501, texts.NEWLINK_CONFIRM)
+    confirm, cancel = (
+        _token_of(fake_bot, cancel=False),
+        _token_of(fake_bot, cancel=True),
+    )
+    assert confirm == cancel  # one token, two buttons
+    assert "regenerate" not in " ".join(panel.calls)  # no panel write yet
+    assert fake_bot.callback_answers[-1] == ("cb-501", None, False)
+
+
+async def test_newlink_cancel_keeps_the_old_link(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-5.2): «❌ Отмена» drops the token and touches nothing."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+    cancel = _payload_of(fake_bot, cancel=True)
+    await confirm_callback(
+        callback(cancel, message_id=501), fake_bot, handler_container
+    )
+
+    assert fake_bot.edits[-1][2] == texts.CONFIRM_CANCELLED
+    assert fake_bot.callback_answers[-1][1] == texts.CALLBACK_CANCELLED
+    client = await panel.get_client(USER)
+    assert client is not None and client.sub_id == "abc"
+
+
+async def test_newlink_confirm_regenerates_and_rewrites_the_card(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-5.0/5.3): the old ``sub_id`` dies and the card is re-rendered."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+    before = await panel.get_client(USER)
+    assert before is not None and before.sub_id == "abc"
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+    confirm = _payload_of(fake_bot, cancel=False)
+    await confirm_callback(
+        callback(confirm, message_id=501), fake_bot, handler_container
+    )
+
+    fresh = await panel.get_client(USER)
+    assert fresh is not None and fresh.sub_id and fresh.sub_id != "abc"
+    (chat_id, message_id, text, kwargs) = fake_bot.edits[-1]
+    assert (chat_id, message_id) == (99, 501)
+    assert texts.PROFILE_TITLE in text
+    assert fresh.sub_id in text  # the dashboard carries the *new* link
+    assert texts.BUTTON_PROFILE_QR in [
+        button.text for row in kwargs["reply_markup"].keyboard for button in row
+    ]
+    assert ("user.sub_regenerate", str(USER)) in await audit_rows(session_factory)
+
+
+async def test_newlink_is_rate_limited_for_ten_minutes(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-5.4): a second request < 10 min is refused, gateway untouched."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+    confirm = _payload_of(fake_bot, cancel=False)
+    await confirm_callback(
+        callback(confirm, message_id=501), fake_bot, handler_container
+    )
+
+    edits, mutates = len(fake_bot.edits), panel.calls.count("mutate")
+    await profile_callback(
+        callback("prf:newlink", message_id=502), fake_bot, handler_container
+    )
+
+    assert len(fake_bot.edits) == edits  # no second card
+    assert panel.calls.count("mutate") == mutates  # no gateway write
+    assert fake_bot.callback_answers[-1][1] == texts.NEWLINK_RATE_LIMITED
+    assert fake_bot.callback_answers[-1][2] is True
+    assert USER in _last_regen
+
+
+async def test_newlink_failure_keeps_the_old_link(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-5.3/4): a failure keeps the old link and does not lock the user."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+    panel.drop_writes = True  # the write is dropped -> PanelError
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+    confirm = _payload_of(fake_bot, cancel=False)
+    await confirm_callback(
+        callback(confirm, message_id=501), fake_bot, handler_container
+    )
+
+    assert fake_bot.edits[-1][2] == texts.NEWLINK_FAILED
+    client = await panel.get_client(USER)
+    assert client is not None and client.sub_id == "abc"
+    assert USER not in _last_regen  # a failed attempt starts no cooldown
+    assert ("user.sub_regenerate", str(USER)) not in await audit_rows(session_factory)
+
+
+async def test_newlink_token_is_bound_to_its_owner(
+    handler_container: Container, fake_bot: FakeBot
+) -> None:
+    """AC (S1-5.2): a wrong user cannot consume the owner's token."""
+    seeded(handler_container)
+    panel = handler_container.panel
+    assert isinstance(panel, FakePanel)
+
+    await profile_callback(
+        callback("prf:newlink", message_id=501), fake_bot, handler_container
+    )
+    confirm = _payload_of(fake_bot, cancel=False)
+    token = _token_of(fake_bot, cancel=False)
+
+    intruder = callback(confirm, message_id=501)
+    intruder.from_user = SimpleNamespace(
+        id=OTHER, username="trinity", first_name="Trinity"
+    )
+    await confirm_callback(intruder, fake_bot, handler_container)
+
+    assert fake_bot.callback_answers[-1][1] == texts.ERROR_CONFIRM_EXPIRED
+    client = await panel.get_client(USER)
+    assert client is not None and client.sub_id == "abc"
+    # The owner's token survived, and asking again mints a *fresh* card.
+    assert handler_container.confirmations.peek(token, USER) == ACTION_NEWLINK
+    await profile_callback(
+        callback("prf:newlink", message_id=503), fake_bot, handler_container
+    )
+    assert _token_of(fake_bot, cancel=False) != token

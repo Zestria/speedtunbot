@@ -412,9 +412,60 @@ async def test_approve_notifies_user_and_writes_audit(
     await payments.approve(payment.id, ADMIN)
 
     user_texts = [text for chat, text in fake_bot.sent if chat == USER]
-    expected = texts.PAYMENT_USER_APPROVED.format(name=tariff.name, days=tariff.days)
+    row = await load_payment(session_factory, payment.id)
+    assert row.expiry_after_ms is not None
+    expected = texts.PAYMENT_USER_APPROVED.format(
+        name=tariff.name, expiry=payments._expiry_label(int(row.expiry_after_ms))
+    )
     assert expected in user_texts
+    # S1-5.7: the approval carries the granted expiry *and* a profile button.
+    (_, _, kwargs) = fake_bot.messages[-1]
+    assert payloads(kwargs["reply_markup"]) == ["prf:profile"]
     assert ("payment.approve", str(payment.id)) in await audit_actions(session_factory)
+
+
+async def test_approve_of_a_perpetual_client_says_unlimited(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-5.6/7): a perpetual client picks the «бессрочная» copy (§S1-5.9)."""
+    await seed_user(session_factory, USER)
+    tariff = await seed_tariff(session_factory)
+    # ``0`` **and** enabled = truly unlimited (S0-1): expiry must stay 0.
+    panel_of(handler_container).seed(USER, expiry_ms=0, enable=True)
+
+    payments = payments_of(handler_container)
+    payment = await payments.create(USER, tariff)
+    await payments.submit(payment.id)
+    await payments.approve(payment.id, ADMIN)
+
+    row = await load_payment(session_factory, payment.id)
+    assert row.expiry_after_ms == 0
+    user_texts = [text for chat, text in fake_bot.sent if chat == USER]
+    assert texts.PAYMENT_USER_APPROVED_UNLIMITED.format(name=tariff.name) in user_texts
+    (_, _, kwargs) = fake_bot.messages[-1]
+    assert payloads(kwargs["reply_markup"]) == ["prf:profile"]
+
+
+async def test_decline_notifies_user_with_a_support_button(
+    handler_container: Container,
+    fake_bot: FakeBot,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """AC (S1-5.8): the decline copy reaches the user with a support button."""
+    await seed_user(session_factory, USER)
+    tariff = await seed_tariff(session_factory)
+    panel_of(handler_container).seed(USER, expiry_ms=now_ms())
+
+    payments = payments_of(handler_container)
+    payment = await payments.create(USER, tariff)
+    await payments.submit(payment.id)
+    await payments.decline(payment.id, ADMIN)
+
+    (chat_id, text, kwargs) = fake_bot.messages[-1]
+    assert (chat_id, text) == (USER, texts.PAYMENT_USER_DECLINED)
+    assert payloads(kwargs["reply_markup"]) == ["prf:support"]
 
 
 # --- decline / cancel ------------------------------------------------------

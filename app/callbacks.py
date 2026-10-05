@@ -389,6 +389,20 @@ class Confirmations:
         del self._pending[token]
         return Confirmation(ConfirmResult.OK, pending.args)
 
+    def peek(self, token: str, admin_id: int) -> str | None:
+        """Return the action bound to a live ``token`` owned by ``admin_id``.
+
+        A non-destructive lookup (the token itself never encodes the action, so
+        the central ``cf:`` dispatcher must learn it *before* :meth:`consume`).
+        ``None`` when the token is unknown, expired, or belongs to somebody else;
+        an unknown owner therefore never burns another user's token.
+        """
+        self.purge()
+        pending = self._pending.get(token)
+        if pending is None or pending.admin_id != int(admin_id):
+            return None
+        return pending.action
+
     def cancel(self, token: str, admin_id: int) -> bool:
         """Drop ``token`` when it belongs to ``admin_id`` (``cf:x:`` button)."""
         pending = self._pending.get(token)

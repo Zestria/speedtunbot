@@ -31,10 +31,11 @@ from zoneinfo import ZoneInfo
 from telebot.util import quick_markup
 
 from app import texts
-from app.callbacks import ProfileNav, unpack
+from app.callbacks import Confirm, ProfileNav, unpack
 from app.container import Container
 from app.errors import InvalidCallback, PanelError
 from app.handlers.common import alert_staff, reply
+from app.handlers.confirm import register_action
 from app.handlers.payment import show_tariffs
 from app.handlers.support import enter_support
 from app.services.panel import ClientTraffic
@@ -60,6 +61,25 @@ STATE_NOT_ACTIVATED = "not_activated"
 
 #: An enabled client entering its last three days is "expiring" (🟡).
 EXPIRING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000
+
+#: ``cf:`` action name and cooldown for «🔄 Новая ссылка» (§S1-5.2–.4).
+ACTION_NEWLINK = "newlink"
+REGEN_COOLDOWN = 600.0
+
+#: ``tg_id`` → monotonic time of the last **successful** regeneration. A failed
+#: attempt never stamps it, so the user is not locked out by a panel hiccup.
+_last_regen: dict[int, float] = {}
+
+
+def _regen_allowed(tg_id: int, now: float) -> bool:
+    """Return ``True`` when ``tg_id`` may regenerate a link right now (§S1-5.4).
+
+    ``now`` is a monotonic timestamp so the check is independent of the wall
+    clock; the cooldown is only started **after** a regeneration succeeds.
+    """
+    last = _last_regen.get(int(tg_id))
+    return last is None or (now - last) >= REGEN_COOLDOWN
+
 
 _STATE_LINES = {
     STATE_ACTIVE: texts.PROFILE_STATE_ACTIVE,
@@ -305,6 +325,8 @@ async def profile_callback(call: Any, bot: Any, container: Container) -> None:
         await _show_instr_picker(call, bot, container)
     elif section == "link":
         await _show_link(call, bot, container)
+    elif section == "newlink":
+        await _show_newlink_request(call, bot, container)
     elif section == "pay":
         await _show_pay(call, bot, container)
     elif section == "support":
@@ -417,6 +439,85 @@ async def _show_link(call: Any, bot: Any, container: Container) -> None:
     await _reply_screen(call, bot, container, build)
 
 
+async def _show_newlink_request(call: Any, bot: Any, container: Container) -> None:
+    """«🔄 Новая ссылка» — mint a confirmation token and show its card (§S1-5.2).
+
+    The cooldown is checked here **and** again at confirmation, so a user cannot
+    queue a second regeneration by pressing the button while the first card is
+    still on screen. Nothing is written to the panel yet — the card is only a
+    question, and the old link keeps working until «✅ Подтвердить».
+    """
+    tg_id = int(call.from_user.id)
+    if not _regen_allowed(tg_id, time.monotonic()):
+        await _answer(bot, call, texts.NEWLINK_RATE_LIMITED, alert=True)
+        return
+    store = container.confirmations
+    if store is None:  # pragma: no cover - container is wired at startup
+        await _answer(bot, call, texts.ERROR_GENERIC)
+        return
+
+    token = store.create(tg_id, ACTION_NEWLINK)
+    markup = quick_markup(
+        {
+            texts.BUTTON_CONFIRM: {"callback_data": Confirm(token=token).pack()},
+            texts.BUTTON_CANCEL: {
+                "callback_data": Confirm(token=token, cancel=True).pack()
+            },
+        },
+        row_width=2,
+    )
+    chat_id, message_id = _target(call)
+    await delete_if_photo(bot, call)
+    await edit_or_send(bot, chat_id, message_id, texts.NEWLINK_CONFIRM, markup=markup)
+    await _answer(bot, call, None)
+
+
+@register_action(ACTION_NEWLINK)
+async def _confirm_newlink(call: Any, bot: Any, container: Container) -> None:
+    """«✅ Подтвердить» — assign a fresh ``sub_id`` and re-render the card (§S1-5.3).
+
+    Runs through the central ``cf:`` dispatcher (§S1-5.1). The cooldown is
+    re-checked because the confirmation can be pressed minutes after the card
+    was minted. A panel failure leaves the old ``sub_id`` in place: nothing was
+    written, so the user is told the old link still works instead of being left
+    with a dead one. Only a **successful** regeneration stamps the cooldown.
+    """
+    tg_id = int(call.from_user.id)
+    now = time.monotonic()
+    if not _regen_allowed(tg_id, now):
+        await _answer(bot, call, texts.NEWLINK_RATE_LIMITED, alert=True)
+        return
+    panel = container.panel
+    if panel is None:  # pragma: no cover - container is wired at startup
+        await _answer(bot, call, texts.ERROR_GENERIC)
+        return
+
+    try:
+        sub_id = await panel.regenerate_sub_id(tg_id)
+    except PanelError as exc:
+        logger.warning("panel failure regenerating link for %s: %s", tg_id, exc)
+        chat_id, message_id = _target(call)
+        await delete_if_photo(bot, call)
+        await edit_or_send(bot, chat_id, message_id, texts.NEWLINK_FAILED)
+        await _answer(bot, call, texts.NEWLINK_FAILED, alert=True)
+        await alert_staff(container, "newlink", exc)
+        return
+
+    _last_regen[tg_id] = now
+    await _audit_regen(container, tg_id, sub_id)
+    # Re-reads the panel (cache was invalidated by the write), so the card shows
+    # the new link and the QR button; it also answers the callback.
+    await _show_profile(call, bot, container)
+
+
+async def _audit_regen(container: Container, tg_id: int, sub_id: str) -> None:
+    """Record ``user.sub_regenerate`` (best effort, never raises, §S1-5.3)."""
+    audit = container.audit
+    if audit is None:
+        return
+    await audit.log(tg_id, "user.sub_regenerate", "user", tg_id, sub_id=sub_id)
+
+
 async def _resolve_target(
     call: Any, bot: Any, container: Container
 ) -> tuple[ClientTraffic, str] | None:
@@ -467,10 +568,12 @@ def _target(call: Any) -> tuple[int, int]:
     return int(message.chat.id), int(message.message_id)
 
 
-async def _answer(bot: Any, call: Any, text: str | None) -> None:
+async def _answer(
+    bot: Any, call: Any, text: str | None, *, alert: bool = False
+) -> None:
     """Answer the callback query without ever raising."""
     try:
-        await bot.answer_callback_query(getattr(call, "id", None), text)
+        await bot.answer_callback_query(getattr(call, "id", None), text, alert)
     except Exception:  # pragma: no cover - cosmetic
         logger.debug("failed to answer callback", exc_info=True)
 
@@ -490,8 +593,12 @@ def register_profile_handler(bot: Any, container: Container) -> None:
 
 
 __all__ = [
+    "ACTION_NEWLINK",
     "INSTR_PREFIX",
     "NAMESPACE",
+    "REGEN_COOLDOWN",
+    "_last_regen",
+    "_regen_allowed",
     "instr_picker_keyboard",
     "instructions_keyboard",
     "link_keyboard",

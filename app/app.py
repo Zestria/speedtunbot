@@ -137,6 +137,7 @@ async def run() -> None:
     container.init_rbac()
     container.init_settings()
     container.init_audit()
+    container.init_confirmations()
     container.init_panel()
     container.init_users()
     container.init_payments()

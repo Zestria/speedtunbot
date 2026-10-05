@@ -18,6 +18,8 @@ ERROR_PANEL = "⚠️ Сервис временно недоступен. Поп
 ERROR_ACCESS_DENIED = "⛔ Недостаточно прав."
 ERROR_STALE_BUTTON = "⌛ Кнопка устарела."
 ERROR_CONFIRM_EXPIRED = "⌛ Подтверждение устарело."
+#: Body shown in place of a confirmation card after «❌ Отмена» (S1-5.1).
+CONFIRM_CANCELLED = "❌ Действие отменено."
 ERROR_WAIT = "⏳ Подождите…"
 ERROR_MAINTENANCE = "🛠 Идут технические работы. Попробуйте позже."
 ERROR_UNKNOWN_USER = "❓ Пользователь не найден."
@@ -41,6 +43,7 @@ BUTTON_NEXT = "Вперёд ➡️"
 
 CALLBACK_DONE = "Готово"
 CALLBACK_ALREADY_DONE = "Уже обработано"
+CALLBACK_CANCELLED = "Отменено"
 
 # --- /start (M0-09.1) ------------------------------------------------------
 
@@ -248,11 +251,11 @@ PAYMENT_TARIFF_BUTTON = "{days} дней — {price} ₽"
 PAYMENT_INSTRUCTIONS = (
     "💳 <b>Оплата тарифа</b>\n\n"
     "Тариф: <b>{name}</b>\n"
-    "Сумма к оплате: <b>{price} ₽</b>\n\n"
-    "Переведите средства на счёт:\n"
+    "К оплате: <b>{price} ₽</b>\n\n"
+    "Переведите сумму на счёт:\n"
     "<code>{bank_details}</code>\n\n"
-    "После оплаты нажмите ✅ Готово.\n"
-    "Если передумали — ❌ Отмена."
+    "После перевода нажмите <b>✅ Готово</b>.\n"
+    "Если передумали — <b>❌ Отмена</b>."
 )
 PAYMENT_NO_BANK_DETAILS = "⚠️ Реквизиты для оплаты не настроены. Обратитесь в /support."
 PAYMENT_ALREADY_SUBMITTED = (
@@ -309,10 +312,18 @@ PAYMENT_EXPIRY_UNLIMITED = "бессрочно"
 #: A disabled ``0`` expiry (never activated) shown on the review card (S0-1.5).
 PAYMENT_EXPIRY_NOT_ACTIVATED = "не активирован"
 PAYMENT_USER_APPROVED = (
-    "✅ <b>Подписка активирована!</b>\n\n"
+    "✅ <b>Оплата подтверждена!</b>\n\n"
     "Тариф: <b>{name}</b>\n"
-    "Добавлено: {days} дн.\n"
-    "Проверить статус: /profile"
+    "Подписка до {expiry}.\n\n"
+    "Проверить статус можно кнопкой ниже."
+)
+#: The perpetual-client variant of :data:`PAYMENT_USER_APPROVED` (S1-5.6):
+#: ``expiry_after_ms`` was ``None``/``0``, so there is no «до …» date to show.
+PAYMENT_USER_APPROVED_UNLIMITED = (
+    "✅ <b>Оплата подтверждена!</b>\n\n"
+    "Тариф: <b>{name}</b>\n"
+    "Подписка бессрочная.\n\n"
+    "Проверить статус можно кнопкой ниже."
 )
 PAYMENT_USER_DECLINED = "❌ Ваша заявка была отклонена.\n\nПо вопросам: /support"
 PAYMENT_RETRY_ALERT = (
@@ -349,3 +360,26 @@ BUTTON_MENU_PAY = "💳 Оплата"
 #: constant each instead of two literals that could drift apart.
 BUTTON_MENU_INSTR = BUTTON_PROFILE_INSTR
 BUTTON_MENU_SUPPORT = BUTTON_PROFILE_SUPPORT
+
+# --- link regeneration + post-payment polish (S1-5) -------------------------
+
+#: Confirmation card shown before «🔄 Новая ссылка» regenerates the sub id.
+NEWLINK_CONFIRM = (
+    "🔄 <b>Новая ссылка</b>\n\n"
+    "⚠️ Старая ссылка перестанет работать — нужно будет заново добавить "
+    "подписку в приложение.\n\n"
+    "Продолжить?"
+)
+#: Toast when a regeneration is requested before :data:`REGEN_COOLDOWN` passed.
+NEWLINK_RATE_LIMITED = "⌛ Новую ссылку можно создать раз в 10 минут."
+#: Shown in place of the card when the panel refused to regenerate; the old link
+#: is untouched, so the user is told so explicitly (§S1-5.3).
+NEWLINK_FAILED = (
+    "⚠️ Не удалось обновить ссылку. Старая ссылка продолжает работать.\n\n"
+    "Попробуйте позже или напишите в /support."
+)
+
+#: Post-payment buttons (§S1-5.6) — aliases, so the menu, the dashboard and the
+#: payment notification can never name the same destination differently.
+BUTTON_GO_PROFILE = BUTTON_MENU_PROFILE
+BUTTON_GO_SUPPORT = BUTTON_MENU_SUPPORT

@@ -94,6 +94,7 @@ async def handler_container(
     container.init_rbac()
     container.init_settings()
     container.init_audit()
+    container.init_confirmations()
     container.panel = FakePanel()
     container.subscriptions = SubscriptionService(container.panel)
     container.init_users()

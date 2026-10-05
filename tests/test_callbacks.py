@@ -173,6 +173,17 @@ class _Clock:
         return self.now
 
 
+def test_confirmations_peek_does_not_consume() -> None:
+    """The central ``cf:`` dispatcher learns the action without burning it."""
+    store = Confirmations(clock=_Clock())
+    token = store.create(1, "newlink", 7)
+    # Wrong owner / unknown token -> no action, and the token stays live.
+    assert store.peek(token, admin_id=2) is None
+    assert store.peek("nope", admin_id=1) is None
+    assert store.peek(token, admin_id=1) == "newlink"
+    assert store.consume(token, 1, "newlink") == Confirmation(ConfirmResult.OK, (7,))
+
+
 def test_confirmations_create_and_consume() -> None:
     store = Confirmations(ttl=60.0, clock=_Clock())
     token = store.create(1, "pay.approve", 5)

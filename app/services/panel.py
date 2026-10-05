@@ -425,19 +425,30 @@ class PanelGateway:
             return fresh
 
     async def regenerate_sub_id(self, tg_id: int) -> str:
-        """Assign a fresh ``sub_id`` and return it (old link stops working)."""
+        """Assign a fresh ``sub_id`` and return it (old link stops working).
+
+        Hardened per §S1-5.0: a write that produced an empty id, or silently
+        kept the previous one, is a failure (``PanelError``) rather than a
+        "success" that would hand the user an unchanged link.
+        """
         sub_id = new_sub_id()
+        if not sub_id:  # pragma: no cover - ``new_sub_id`` is random, not empty
+            raise PanelError("panel produced an empty sub_id")
+        previous: list[str] = []
 
         def apply(client: Client) -> bool:
+            previous.append(client.sub_id or "")
             client.sub_id = sub_id
             return True
 
-        await self.mutate(
+        fresh = await self.mutate(
             tg_id,
             apply,
             lambda c: c.sub_id == sub_id,
             desc=f"sub_id={sub_id}",
         )
+        if not fresh.sub_id or fresh.sub_id == (previous[0] if previous else ""):
+            raise PanelError(f"panel did not change the sub_id of client {tg_id}")
         return sub_id
 
     async def delete_client(self, tg_id: int) -> None:

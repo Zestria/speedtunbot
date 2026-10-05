@@ -183,7 +183,11 @@ class PaymentService:
             payment_id,
             texts.PAYMENT_CARD_DECLINED.format(actor=self._actor_label(actor)),
         )
-        await self._notify_user(int(payment.user_tg_id), texts.PAYMENT_USER_DECLINED)
+        await self._notify_user(
+            int(payment.user_tg_id),
+            texts.PAYMENT_USER_DECLINED,
+            reply_markup=self._go_markup("support", texts.BUTTON_GO_SUPPORT),
+        )
         await self._audit_log(
             actor, ACTION_DECLINE, payment_id, tg_id=payment.user_tg_id
         )
@@ -463,9 +467,8 @@ class PaymentService:
         )
         await self._notify_user(
             int(fresh.user_tg_id),
-            texts.PAYMENT_USER_APPROVED.format(
-                name=esc(fresh.tariff_name), days=fresh.days
-            ),
+            self._user_approval_text(fresh),
+            reply_markup=self._go_markup("profile", texts.BUTTON_GO_PROFILE),
         )
         await self._audit_log(
             actor,
@@ -550,12 +553,47 @@ class PaymentService:
             row_width=1,
         )
 
-    async def _notify_user(self, tg_id: int, text: str) -> None:
-        """Best-effort direct message to the paying user (never raises)."""
+    async def _notify_user(
+        self, tg_id: int, text: str, *, reply_markup: Any | None = None
+    ) -> None:
+        """Best-effort direct message to the paying user (never raises).
+
+        ``reply_markup`` lets a post-payment notice carry a follow-up button
+        (profile / support) instead of leaving the user with a dead-end message
+        (§S1-5.7–.8).
+        """
         notifier = self._notifier
         if notifier is None:
             return
-        await notifier.safe_send(int(tg_id), text, parse_mode="HTML")
+        await notifier.safe_send(
+            int(tg_id), text, reply_markup=reply_markup, parse_mode="HTML"
+        )
+
+    def _user_approval_text(self, payment: Payment) -> str:
+        """Approval copy for the user, carrying the granted expiry (§S1-5.7).
+
+        ``expiry_after_ms`` is ``None`` (or ``0``) for a perpetual client, so the
+        unlimited string is chosen on the falsy value — never ``or 0`` on a
+        formatted date, which would print a bogus epoch timestamp.
+        """
+        expiry = payment.expiry_after_ms
+        if not expiry:
+            return texts.PAYMENT_USER_APPROVED_UNLIMITED.format(
+                name=esc(payment.tariff_name)
+            )
+        return texts.PAYMENT_USER_APPROVED.format(
+            name=esc(payment.tariff_name), expiry=self._expiry_label(int(expiry))
+        )
+
+    def _go_markup(self, section: str, label: str) -> Any:
+        """One-button ``prf:`` keyboard for a post-payment notification."""
+        from telebot.util import quick_markup
+
+        from app.callbacks import ProfileNav
+
+        return quick_markup(
+            {label: {"callback_data": ProfileNav(section).pack()}}, row_width=1
+        )
 
     async def _username(self, tg_id: int) -> str | None:
         sessionmaker = self._require_sessionmaker()

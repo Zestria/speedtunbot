@@ -67,3 +67,30 @@ def test_menu_texts_point_at_the_menu_itself_and_the_commands() -> None:
     assert texts.START_MENU
     for name in ("/start", "/profile", "/pay", "/support"):
         assert name in texts.HELP_TEXT
+
+
+# --- link regeneration + post-payment copy (S1-5) ---------------------------
+
+
+def test_newlink_copy_is_plain_text_without_placeholders() -> None:
+    """AC (S1-5.2): the confirmation and failure cards need no substitution."""
+    assert "Старая ссылка перестанет работать" in texts.NEWLINK_CONFIRM
+    assert "{link}" not in texts.NEWLINK_CONFIRM
+    assert "{link}" not in texts.NEWLINK_FAILED
+    assert "10" in texts.NEWLINK_RATE_LIMITED
+
+
+def test_payment_instructions_bold_the_price_and_code_the_details() -> None:
+    """AC (S1-5.5): the amount is bold, the account is a ``<code>`` block."""
+    assert "<b>{price} ₽</b>" in texts.PAYMENT_INSTRUCTIONS
+    assert "<code>{bank_details}</code>" in texts.PAYMENT_INSTRUCTIONS
+
+
+def test_post_payment_copy_and_buttons_match_the_menu() -> None:
+    """AC (S1-5.6): the finite copy takes an expiry, the unlimited one does not."""
+    assert "{expiry}" in texts.PAYMENT_USER_APPROVED
+    assert "{expiry}" not in texts.PAYMENT_USER_APPROVED_UNLIMITED
+    assert texts.PAYMENT_USER_APPROVED_UNLIMITED
+    # Shared by identity, so the notification cannot name the screens differently.
+    assert texts.BUTTON_GO_PROFILE is texts.BUTTON_MENU_PROFILE
+    assert texts.BUTTON_GO_SUPPORT is texts.BUTTON_MENU_SUPPORT

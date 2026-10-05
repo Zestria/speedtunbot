@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.callbacks import Confirmations
 from app.db.repositories.settings import DEFAULT_SETTINGS
 from app.services.admins import AdminService
 from app.services.audit import AuditService
@@ -50,6 +51,9 @@ class Container:
     users: UserService | None = field(default=None)
     # DB-backed payments (M0-10). Built via :meth:`init_payments`.
     payments: PaymentService | None = field(default=None)
+    # Server-side confirmation tokens (§S1-5.1). Built via
+    # :meth:`init_confirmations`.
+    confirmations: Confirmations | None = field(default=None)
 
     def init_panel(self) -> tuple[PanelGateway, SubscriptionService]:
         """Create the panel gateway + subscription service from settings."""
@@ -85,6 +89,11 @@ class Container:
         audit = AuditService(self.sessionmaker)
         self.audit = audit
         return audit
+
+    def init_confirmations(self) -> Confirmations:
+        """Create the in-memory confirmation store (§S1-5.1)."""
+        self.confirmations = Confirmations()
+        return self.confirmations
 
     def init_users(self) -> UserService:
         """Create the user/access service (needs the panel + audit, §M0-09)."""

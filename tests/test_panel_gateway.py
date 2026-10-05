@@ -390,6 +390,19 @@ async def test_regenerate_sub_id_changes_it(settings: Settings) -> None:
     assert client is not None and client.sub_id == new
 
 
+async def test_regenerate_sub_id_rejects_a_silent_noop(settings: Settings) -> None:
+    """§S1-5.0: a write that kept the old ``sub_id`` is a failure, not success."""
+    api = StubApi()
+    seed(api, sub_id="old-sub-id")
+    api.apply_updates = False  # the panel "accepts" the update and drops it
+    gateway = make_gateway(settings, api)
+
+    with pytest.raises(PanelError):
+        await gateway.regenerate_sub_id(TG)
+    client = await gateway.get_client(TG)
+    assert client is not None and client.sub_id == "old-sub-id"
+
+
 async def test_delete_client_removes_it(settings: Settings) -> None:
     api = StubApi()
     seed(api)
