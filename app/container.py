@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.repositories.settings import DEFAULT_SETTINGS
 from app.services.admins import AdminService
+from app.services.audit import AuditService
 from app.services.notifier import Notifier
 from app.services.panel import PanelGateway
 from app.services.settings_service import SettingsService
@@ -41,6 +42,8 @@ class Container:
     notifier: Notifier | None = field(default=None)
     # Runtime settings (M0-05). Built during startup via :meth:`init_settings`.
     settings_service: SettingsService | None = field(default=None)
+    # Audit trail (M0-08). Built during startup via :meth:`init_audit`.
+    audit: AuditService | None = field(default=None)
 
     def init_panel(self) -> tuple[PanelGateway, SubscriptionService]:
         """Create the panel gateway + subscription service from settings."""
@@ -70,6 +73,12 @@ class Container:
         service = SettingsService(self.sessionmaker, defaults=defaults)
         self.settings_service = service
         return service
+
+    def init_audit(self) -> AuditService:
+        """Create the audit service (needs the DB sessionmaker, §M0-08.1)."""
+        audit = AuditService(self.sessionmaker)
+        self.audit = audit
+        return audit
 
     @asynccontextmanager
     async def db(self) -> AsyncIterator[AsyncSession]:

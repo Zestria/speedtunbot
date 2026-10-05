@@ -11,12 +11,32 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import traceback
 from collections.abc import Iterable
 
 MASK = "***"
+#: Secrets shorter than this are ignored to avoid over-masking ordinary text.
+MIN_SECRET_LENGTH = 8
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def normalize_secrets(secrets: Iterable[str]) -> tuple[str, ...]:
+    """Drop falsy/short values so ordinary text is never over-masked."""
+    return tuple(s for s in secrets if s and len(s) >= MIN_SECRET_LENGTH)
+
+
+def mask_secrets(value: str, secrets: Iterable[str]) -> str:
+    """Replace every known secret in ``value`` with :data:`MASK`.
+
+    Shared by the logging filter (stdout) and the M0-08 error reporter (owner
+    alerts), so there is exactly one masking rule in the app.
+    """
+    for secret in secrets:
+        if secret in value:
+            value = value.replace(secret, MASK)
+    return value
 
 
 class SecretMaskingFilter(logging.Filter):
@@ -24,14 +44,10 @@ class SecretMaskingFilter(logging.Filter):
 
     def __init__(self, secrets: Iterable[str] = ()) -> None:
         super().__init__()
-        # Ignore short/falsy values to avoid over-masking ordinary text.
-        self._secrets = tuple(s for s in secrets if s and len(s) >= 8)
+        self._secrets = normalize_secrets(secrets)
 
     def _mask(self, value: str) -> str:
-        for secret in self._secrets:
-            if secret in value:
-                value = value.replace(secret, MASK)
-        return value
+        return mask_secrets(value, self._secrets)
 
     def filter(self, record: logging.LogRecord) -> bool:
         if self._secrets:
@@ -47,6 +63,16 @@ class SecretMaskingFilter(logging.Filter):
                     self._mask(arg) if isinstance(arg, str) else arg
                     for arg in record.args
                 )
+            # Tracebacks are rendered by the *formatter*, i.e. after filters have
+            # run, so a secret inside an exception message would bypass the mask
+            # above and reach stdout (M0-08.3 logs tracebacks). Render them here
+            # instead; ``Formatter.format`` reuses ``record.exc_text``.
+            if record.exc_info is not None:
+                record.exc_text = self._mask(
+                    "".join(traceback.format_exception(*record.exc_info))
+                )
+            elif record.exc_text:
+                record.exc_text = self._mask(record.exc_text)
         return True
 
 

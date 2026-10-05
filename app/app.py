@@ -15,6 +15,7 @@ from app.container import Container
 from app.db.migrate import upgrade_head
 from app.db.seeds import seed_all
 from app.db.session import create_engine_and_sessionmaker, ensure_sqlite_dir
+from app.error_handler import ErrorReporter, ErrorReporterMiddleware, run_polling
 from app.logging_setup import configure_logging
 from app.settings import Settings, get_settings
 
@@ -89,6 +90,7 @@ async def run() -> None:
     await init_database(container)
     container.init_rbac()
     container.init_settings()
+    container.init_audit()
     logger.info("Starting bot (timezone=%s)", settings.timezone)
 
     # Legacy startup, imported late to avoid import-time side effects.
@@ -108,6 +110,14 @@ async def run() -> None:
     # Order: Context → Maintenance → Access → Throttle (§M0-05.8).
     for middleware in build_middlewares(container, bot):
         bot.setup_middleware(middleware)
+    # Global error reporting (M0-08). Registered *after* the four gates: telebot
+    # swallows handler exceptions after logging them, so a middleware
+    # ``post_process`` is the only hook that can still see them.
+    reporter = ErrorReporter(
+        container.notifier,
+        secrets=[settings.bot_token, settings.vpn_token],
+    )
+    bot.setup_middleware(ErrorReporterMiddleware(reporter))
     register_all_handlers(bot)
 
     me = await bot.get_me()
@@ -115,7 +125,7 @@ async def run() -> None:
     logger.info("Bot is @%s", container.bot_username)
 
     await _publish_command_menus(bot, settings.owner_ids)
-    await bot.polling()
+    await run_polling(bot, reporter)
 
 
 def main() -> None:

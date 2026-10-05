@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import logging
+import sys
 
-from app.logging_setup import MASK, SecretMaskingFilter, configure_logging
+from app.logging_setup import (
+    MASK,
+    SecretMaskingFilter,
+    configure_logging,
+    mask_secrets,
+    normalize_secrets,
+)
 
 _SECRET = "supersecrettoken123"
 
@@ -36,6 +43,32 @@ def test_short_secrets_are_ignored() -> None:
     record = _record("ab normal text ab")
     SecretMaskingFilter(["ab"]).filter(record)
     assert record.getMessage() == "ab normal text ab"
+
+
+def test_filter_masks_traceback_text() -> None:
+    """M0-08.3 logs tracebacks, which are rendered *after* filters run."""
+    try:
+        raise ValueError(f"bad token {_SECRET}")
+    except ValueError:
+        exc_info = sys.exc_info()
+
+    record = _record("boom", None)
+    record.exc_info = exc_info
+    SecretMaskingFilter([_SECRET]).filter(record)
+
+    assert record.exc_text is not None
+    assert _SECRET not in record.exc_text
+    assert MASK in record.exc_text
+
+    formatter = logging.Formatter("%(message)s")
+    assert _SECRET not in formatter.format(record)
+
+
+def test_mask_secrets_helper() -> None:
+    assert mask_secrets(f"a {_SECRET} b", [_SECRET]) == f"a {MASK} b"
+    assert mask_secrets("nothing", [_SECRET]) == "nothing"
+    # Short/falsy values are dropped by ``normalize_secrets``.
+    assert normalize_secrets(["", "ab", _SECRET]) == (_SECRET,)
 
 
 def test_configure_logging_masks_stdout(
